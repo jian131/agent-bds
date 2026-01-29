@@ -5,10 +5,8 @@ Cung cấp common functionality cho tất cả crawlers
 
 import asyncio
 from typing import List, Dict, Optional, Any
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
+from crawl4ai import AsyncWebCrawler, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy, JsonCssExtractionStrategy
-from crawl4ai.content_filter_strategy import PruningContentFilter
-from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy
 from langchain_groq import ChatGroq
 import os
 from config import settings
@@ -18,10 +16,6 @@ class BaseCrawler:
 
     def __init__(self):
         self.llm = self._init_llm()
-        self.crawler_strategy = AsyncPlaywrightCrawlerStrategy(
-            headless=True,
-            verbose=False
-        )
 
     def _init_llm(self):
         """Initialize Groq LLM"""
@@ -36,7 +30,6 @@ class BaseCrawler:
         url: str,
         css_selector: Optional[str] = None,
         extraction_strategy: Optional[Any] = None,
-        js_code: Optional[List[str]] = None,
         wait_for: Optional[str] = None
     ) -> Dict:
         """
@@ -46,35 +39,21 @@ class BaseCrawler:
             url: URL to crawl
             css_selector: CSS selector để filter content
             extraction_strategy: Custom extraction strategy
-            js_code: JavaScript code to execute before extraction
             wait_for: CSS selector to wait for before extraction
 
         Returns:
             Dict with: html, markdown, extracted_content, links, metadata
         """
 
-        config = CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED,  # Cache để avoid re-crawl
-            css_selector=css_selector,
-            extraction_strategy=extraction_strategy,
-            js_code=js_code,
-            wait_for=wait_for,
-            word_count_threshold=10,  # Minimum words
-            excluded_tags=['nav', 'footer', 'header', 'aside'],
-            remove_overlay_elements=True,
-            process_iframes=False,
-            page_timeout=30000,
-            verbose=False
-        )
-
         try:
-            async with AsyncWebCrawler(
-                crawler_strategy=self.crawler_strategy,
-                verbose=False
-            ) as crawler:
+            async with AsyncWebCrawler(verbose=False) as crawler:
                 result = await crawler.arun(
                     url=url,
-                    config=config
+                    cache_mode=CacheMode.ENABLED,
+                    css_selector=css_selector,
+                    extraction_strategy=extraction_strategy,
+                    word_count_threshold=10,
+                    verbose=False
                 )
 
                 if not result.success:
@@ -86,7 +65,7 @@ class BaseCrawler:
                     'html': result.html,
                     'markdown': result.markdown,
                     'extracted_content': result.extracted_content,
-                    'links': result.links,
+                    'links': result.links.get('internal', []) if result.links else [],
                     'metadata': result.metadata,
                     'success': True
                 }

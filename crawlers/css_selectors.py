@@ -3,6 +3,9 @@ CSS Selectors cho từng platform
 Fast extraction without LLM
 """
 
+from typing import Dict, Optional
+from urllib.parse import urlparse
+
 PLATFORM_SELECTORS = {
     'batdongsan.com.vn': {
         'list_page': {

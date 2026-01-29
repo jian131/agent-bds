@@ -8,9 +8,9 @@ from typing import List, Dict
 from crawlers.google_crawler import GoogleSearchCrawler
 from crawlers.platform_crawlers import PlatformCrawler
 from parsers.listing_parser import ListingParser
-from storage.database import Database
+from storage.database import ListingCRUD, get_session
 from storage.vector_db import VectorDB
-from storage.sheets import SheetsStorage
+from storage.sheets import GoogleSheetsClient
 import time
 
 class RealEstateSearchService:
@@ -20,9 +20,9 @@ class RealEstateSearchService:
         self.google_crawler = GoogleSearchCrawler()
         self.platform_crawler = PlatformCrawler()
         self.parser = ListingParser()
-        self.db = Database()
+        self.listing_crud = ListingCRUD()
         self.vector_db = VectorDB()
-        self.sheets = SheetsStorage()
+        self.sheets = GoogleSheetsClient()
 
     async def search(self, user_query: str, max_results: int = 50) -> List[Dict]:
         """
@@ -94,7 +94,9 @@ class RealEstateSearchService:
             print(f"\n💾 Saving to storage...")
             try:
                 # Save to database
-                await self.db.save_listings(unique_listings)
+                async with get_session() as session:
+                    for listing in unique_listings:
+                        await self.listing_crud.create_listing(session, listing)
                 print(f"  ✅ Saved to PostgreSQL")
 
                 # Save to vector DB for semantic search
