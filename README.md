@@ -1,313 +1,513 @@
-# 🏠 BDS Agent - Hệ thống tìm kiếm & quản lý tin BĐS tự động
+# 🏠 BDS Agent - Hệ thống tìm kiếm BĐS với Crawl4AI
 
-Hệ thống AI Agent tự động thu thập, lưu trữ và tìm kiếm thông tin bất động sản từ nhiều nguồn.
+Hệ thống tìm kiếm bất động sản tự động thu thập, phân tích và lọc thông tin từ nhiều nguồn với AI và Vector Search.
 
 ## ✨ Tính năng chính
 
-- **🤖 AI Agent thông minh**: Tự động tìm kiếm và thu thập dữ liệu từ nhiều nguồn
-- **🌐 Multi-source scraping**: Chợ Tốt, Batdongsan.com.vn, Mogi, Alonhadat, Facebook, Google
-- **✅ Data validation**: Kiểm tra số điện thoại, giá hợp lý, địa chỉ thực
-- **🔍 Semantic search**: Tìm kiếm ngữ nghĩa với ChromaDB
-- **📊 Database + Backup**: PostgreSQL + Google Sheets
-- **🔔 Notifications**: Telegram Bot alerts
-- **🎯 100% FREE stack**: Ollama local LLM, browser-use automation
+- **⚡ Crawl4AI Integration**: Thu thập dữ liệu siêu nhanh với Playwright + CSS Selectors
+- **🌐 Multi-source crawling**: Batdongsan.com.vn, Mogi, Alonhadat, Facebook Groups, Google Search
+- **🔍 Smart Search Filtering**:
+  - Tự động parse query (giá, địa điểm, loại BĐS)
+  - Filter theo city/district với city detection
+  - Price range với 30% tolerance
+- **🎯 Semantic Search**: ChromaDB + Sentence-Transformers (multilingual)
+- **✅ Data Validation**: Parse và validate giá, diện tích, số điện thoại, địa chỉ
+- **📊 Backend API**: FastAPI với streaming support
+- **🎨 Frontend**: Next.js 14 + Shadcn/UI
 
 ## 🛠️ Tech Stack
 
-| Component          | Technology             |
-| ------------------ | ---------------------- |
-| LLM                | Ollama (qwen2.5:14b)   |
-| Browser Automation | browser-use            |
-| Backend            | FastAPI                |
-| Database           | PostgreSQL             |
-| Vector DB          | ChromaDB               |
-| Frontend           | Next.js 14 + Shadcn/UI |
-| Scheduler          | APScheduler            |
-| Backup             | Google Sheets API      |
-| Notifications      | Telegram Bot API       |
+| Component    | Technology                                       |
+| ------------ | ------------------------------------------------ |
+| Web Crawling | Crawl4AI 0.3.74 (Playwright + CSS Selectors)     |
+| LLM          | Google Gemini 2.0 Flash                          |
+| Vector DB    | ChromaDB + paraphrase-multilingual-MiniLM-L12-v2 |
+| Backend      | FastAPI                                          |
+| Database     | PostgreSQL (optional - currently degraded)       |
+| Frontend     | Next.js 14 + TailwindCSS + Shadcn/UI             |
+| Language     | Python 3.11+                                     |
 
-## 📁 Project Structure
+## 📁 Cấu trúc dự án
 
 ```
 bds-agent/
-├── main.py                 # Entry point
-├── config.py               # Settings (Pydantic)
-├── docker-compose.yml      # PostgreSQL + Redis
+├── main.py                      # Backend API entry point
+├── config.py                    # Environment config
+├── requirements.txt             # Python dependencies
 │
 ├── agents/
-│   ├── search_agent.py     # Core AI agent
-│   ├── tools.py            # Custom tools
-│   └── prompts.py          # LLM prompts
+│   └── search_agent.py          # Search orchestration agent
 │
-├── storage/
-│   ├── database.py         # SQLAlchemy models
-│   ├── vector_db.py        # ChromaDB wrapper
-│   └── sheets.py           # Google Sheets
+├── crawlers/
+│   ├── google_crawler.py        # Google Search với Gemini
+│   ├── platform_crawlers.py     # Batdongsan, Mogi, Alonhadat crawlers
+│   ├── facebook_crawler.py      # Facebook Groups crawler
+│   └── css_selectors.py         # CSS selectors cho từng platform
+│
+├── parsers/
+│   └── listing_parser.py        # Parse & validate listings
 │
 ├── services/
-│   ├── scraper.py          # Scraper orchestrator
-│   ├── validator.py        # Data validation
-│   └── matcher.py          # Buyer-seller matching
+│   └── search_service.py        # Main search service (filtering, dedup)
 │
-├── api/
-│   └── routes/             # FastAPI endpoints
+├── storage/
+│   ├── vector_db.py             # ChromaDB wrapper
+│   └── database.py              # PostgreSQL (optional)
 │
-├── frontend/               # Next.js app
+├── frontend/
+│   ├── app/                     # Next.js App Router
+│   ├── components/              # React components
+│   └── lib/                     # Utils & API client
 │
-└── scheduler/
-    └── jobs.py             # Background jobs
+└── data/
+    └── models/                  # VectorDB models (420MB, tracked by Git LFS)
 ```
 
-## 🚀 Quick Start
+## 🚀 Cài đặt và Chạy hệ thống
 
-### 1. Prerequisites
+### 1. Yêu cầu hệ thống
 
-- Python 3.11+
-- Docker & Docker Compose
-- Ollama installed locally
-- Node.js 18+ (for frontend)
+- **Python 3.11+** 
+- **Node.js 18+** (cho frontend)
+- **Git LFS** (để clone model files)
+- **Google Gemini API Key** (miễn phí tại https://aistudio.google.com/apikey)
 
-### 2. Install Ollama & Model
+### 2. Clone repository
 
 ```bash
-# Install Ollama (Windows)
-# Download from https://ollama.ai/download
+# Install Git LFS (nếu chưa có)
+git lfs install
 
-# Pull the model
-ollama pull qwen2.5:14b
-
-# Verify
-ollama list
+# Clone project (bao gồm model 420MB qua LFS)
+git clone https://github.com/jian131/agent-bds.git
+cd agent-bds/bds-agent
 ```
 
-### 3. Setup Project
+### 3. Setup Backend (Python)
 
 ```bash
-# Clone repo
-cd bds-agent
+# Tạo virtual environment
+python -m venv venv
 
-# Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-# source .venv/bin/activate  # Linux/Mac
+# Activate venv
+venv\Scripts\activate      # Windows
+# source venv/bin/activate # Linux/Mac
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Install browser-use playwright browsers
-python -m playwright install chromium
+# Install Playwright browsers (cho Crawl4AI)
+playwright install chromium
 ```
 
-### 4. Configure Environment
+### 4. Cấu hình môi trường
 
 ```bash
-# Copy example env
-copy .env.example .env  # Windows
-# cp .env.example .env  # Linux/Mac
-
-# Edit .env with your settings
+# Copy file .env.example
+copy .env.example .env     # Windows
+# cp .env.example .env     # Linux/Mac
 ```
 
-### 5. Start Database
+Chỉnh sửa file `.env`:
+
+```ini
+# === Google Gemini API (BẮT BUỘC) ===
+GOOGLE_API_KEY=your_gemini_api_key_here
+
+# === VectorDB Settings ===
+VECTORDB_ENABLED=true
+VECTORDB_MODEL=paraphrase-multilingual-MiniLM-L12-v2  # Model đã có sẵn
+
+# === Database (OPTIONAL - hiện tại degraded) ===
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/bds_agent
+# Có thể bỏ qua - hệ thống vẫn chạy không cần DB
+
+# === API Settings ===
+API_HOST=0.0.0.0
+API_PORT=8000
+```
+
+### 5. Chạy Backend API
 
 ```bash
-# Start PostgreSQL & Redis
-docker-compose up -d
+# Start FastAPI server
+python main.py
 
-# Verify
-docker-compose ps
+# Hoặc với uvicorn
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 6. Run Agent
+API sẽ chạy tại: **http://localhost:8000**
+
+Swagger docs: **http://localhost:8000/docs**
+
+### 6. Setup Frontend (Next.js)
+
+Mở terminal mới:
 
 ```bash
-# Demo mode
-python main.py demo
+cd frontend
 
-# Interactive mode
-python main.py interactive
+# Install dependencies
+npm install
 
-# Quick search
-python main.py search "chung cư 2PN Cầu Giấy 2-3 tỷ"
-
-# Start API server
-python main.py api
+# Chạy dev server
+npm run dev
 ```
 
-## 📖 Usage Examples
+Frontend sẽ chạy tại: **http://localhost:3000**
 
-### Python API
+### 7. Test hệ thống
 
+**Từ giao diện web:**
+- Truy cập http://localhost:3000
+- Nhập query: `chung cu 3 ty thanh xuan ha noi`
+- Xem kết quả real-time
+
+**Từ API:**
+```bash
+# Test health
+curl http://localhost:8000/health
+
+# Test search
+curl "http://localhost:8000/api/v1/search?query=chung%20cu%202%20ty%20cau%20giay"
+```
+
+**Từ Python:**
 ```python
-import asyncio
-from agents.search_agent import RealEstateSearchAgent
+import requests
 
-async def main():
-    agent = RealEstateSearchAgent()
-
-    result = await agent.search(
-        "Tìm chung cư 2PN Cầu Giấy 2-3 tỷ",
-        max_results=10,
-        platforms=["chotot", "batdongsan"]
-    )
-
-    print(f"Found {result.total_found} listings")
-
-    for listing in result.listings:
-        print(f"- {listing['title']}")
-        print(f"  Price: {listing['price_text']}")
-        print(f"  URL: {listing['source_url']}")
-
-    await agent.close()
-
-asyncio.run(main())
+response = requests.get(
+    "http://localhost:8000/api/v1/search",
+    params={"query": "chung cu 5 ty ha noi"}
+)
+print(response.json())
 ```
 
-### REST API
+## 📖 API Endpoints
 
-```bash
-# Search
-curl -X POST http://localhost:8000/api/search \
-  -H "Content-Type: application/json" \
-  -d '{"query": "chung cư 2PN Cầu Giấy 2-3 tỷ"}'
+### Search API
 
-# Get listings
-curl http://localhost:8000/api/listings
+**GET** `/api/v1/search`
 
-# Get listing detail
-curl http://localhost:8000/api/listings/{id}
-```
+Query Parameters:
+- `query` (required): Search query (VD: "chung cu 2 ty cau giay")
+- `max_results` (optional): Số lượng kết quả tối đa (default: 50)
 
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable           | Description                | Default                    |
-| ------------------ | -------------------------- | -------------------------- |
-| `OLLAMA_MODEL`     | Ollama model name          | `qwen2.5:14b`              |
-| `OLLAMA_BASE_URL`  | Ollama server URL          | `http://localhost:11434`   |
-| `DATABASE_URL`     | PostgreSQL connection      | `postgresql+asyncpg://...` |
-| `HEADLESS_MODE`    | Run browser headless       | `false`                    |
-| `SCRAPE_DELAY_MIN` | Min delay between requests | `2`                        |
-| `SCRAPE_DELAY_MAX` | Max delay between requests | `5`                        |
-
-### Price Validation by District
-
-Giá được validate theo khoảng hợp lý cho từng quận (triệu VND/m²):
-
-| Quận      | Min | Max |
-| --------- | --- | --- |
-| Hoàn Kiếm | 100 | 300 |
-| Ba Đình   | 80  | 250 |
-| Tây Hồ    | 80  | 250 |
-| Cầu Giấy  | 60  | 180 |
-| Hà Đông   | 35  | 100 |
-| ...       | ... | ... |
-
-## 🔒 Data Validation
-
-Mỗi listing được validate:
-
-1. **Required fields**: `source_url`, `title`
-2. **Phone validation**: Format VN (0xxx-xxx-xxxx)
-3. **Price validation**: Trong khoảng hợp lý cho khu vực
-4. **Deduplication**: Hash(url + phone + title)
-5. **Spam detection**: Lọc tin môi giới, ký gửi
-
-## 📊 Listing Schema
-
+Response:
 ```json
 {
-  "id": "md5_hash",
-  "title": "Bán chung cư 2PN tại Cầu Giấy",
-  "price_text": "3 tỷ 500 triệu",
-  "price_number": 3500000000,
-  "area_m2": 85.5,
-  "location": {
-    "address": "123 Đường ABC",
-    "ward": "Nghĩa Đô",
-    "district": "Cầu Giấy",
-    "city": "Hà Nội"
-  },
-  "contact": {
-    "name": "Anh Minh",
-    "phone": "0912 345 678",
-    "phone_clean": "0912345678"
-  },
-  "images": ["url1", "url2"],
-  "source_url": "https://...",
-  "source_platform": "chotot",
-  "scraped_at": "2024-01-20T10:30:00Z",
-  "property_type": "chung cư",
-  "bedrooms": 2,
-  "bathrooms": 2
+  "listings": [
+    {
+      "id": "abc123",
+      "title": "Bán căn hộ 2PN tại Cầu Giấy",
+      "price_text": "2,5 tỷ",
+      "price_number": 2500000000,
+      "area_text": "75m²",
+      "area_m2": 75.0,
+      "location": {
+        "address": "Đường Trần Duy Hưng",
+        "district": "Cầu Giấy",
+        "city": "Hà Nội"
+      },
+      "contact": {
+        "name": "Chủ nhà",
+        "phones": ["0912345678"]
+      },
+      "images": ["url1", "url2"],
+      "source_url": "https://...",
+      "source_platform": "batdongsan.com.vn"
+    }
+  ],
+  "total": 15,
+  "query_parsed": {
+    "city": "Hà Nội",
+    "district": "cau giay",
+    "price_min": 1.6,
+    "price_max": 2.4,
+    "property_type": "apartment"
+  }
 }
 ```
 
-## 🧪 Testing
+### Streaming Search API
 
-```bash
-# Run tests
-pytest tests/ -v
+**GET** `/api/v1/search/stream`
 
-# With coverage
-pytest tests/ --cov=. --cov-report=html
+Server-Sent Events (SSE) endpoint cho real-time updates.
+
+Event types:
+- `status`: Thông báo tiến trình
+- `result`: Từng listing
+- `complete`: Hoàn thành
+
+### Health Check
+
+**GET** `/health`
+
+```json
+{
+  "status": "healthy",
+  "service": "bds-agent",
+  "version": "2.0",
+  "llm": "ok",
+  "database": "degraded"
+}
 ```
 
-## 🐳 Docker Deployment
+## 🔍 Search Query Examples
 
-```bash
-# Build & run all services
-docker-compose -f docker-compose.yml up -d
+Hệ thống tự động parse query tiếng Việt:
 
-# View logs
-docker-compose logs -f
+| Query                              | Parsed                                                  |
+| ---------------------------------- | ------------------------------------------------------- |
+| "chung cu 2 ty cau giay"           | city=HN, district=Cau Giay, price=1.6-2.4 tỷ            |
+| "nha rieng thanh xuan 5 ty"        | city=HN, district=Thanh Xuan, price=4-6 tỷ, type=house |
+| "can ho quan 7 hcm 3-4 ty"         | city=HCM, district=Q7, price=3-4 tỷ                     |
+| "biet thu da nang duoi 10 ty"      | city=Da Nang, price=0-10 tỷ, type=villa                |
+| "chung cu ha noi"                  | city=HN, type=apartment                                 |
 
-# Stop
-docker-compose down
+## 📊 Listing Data Structure
+
+Mỗi listing có cấu trúc:
+
+```python
+{
+    "id": str,                    # Unique ID (MD5 hash)
+    "title": str,                 # Tiêu đề
+    "price_text": str,            # Giá dạng text "2,5 tỷ"
+    "price_number": int,          # Giá dạng số (VND)
+    "area_text": str,             # Diện tích text "75m²"
+    "area_m2": float,             # Diện tích số
+    "location": {
+        "address": str,           # Địa chỉ đầy đủ
+        "ward": str,              # Phường/xã
+        "district": str,          # Quận/huyện
+        "city": str              # Thành phố
+    },
+    "contact": {
+        "name": str,              # Tên người liên hệ
+        "phones": List[str],      # Danh sách SĐT
+        "zalo": List[str],        # Zalo IDs
+        "facebook": List[str],    # Facebook profiles
+        "email": List[str]        # Emails
+    },
+    "images": List[str],          # URLs ảnh
+    "source_url": str,            # URL gốc
+    "source_platform": str,       # Platform name
+    "property_type": str,         # Loại BĐS
+    "bedrooms": int,              # Số phòng ngủ
+    "bathrooms": int,             # Số phòng tắm
+    "description": str,           # Mô tả
+    "scraped_at": datetime,       # Thời gian crawl
+    "posted_at": str             # Thời gian đăng (nếu có)
+}
+```
+
+## 🎯 Smart Filtering
+
+Hệ thống filter listings dựa trên:
+
+### 1. Price Filtering
+- Parse giá từ text: "2,5 tỷ", "500 triệu", "3.5 tỷ"
+- 30% tolerance: Tìm 3 tỷ → filter 2.1-3.9 tỷ
+- Cho phép "Giá thỏa thuận" (negotiate)
+
+### 2. Location Filtering
+- **City matching**: "Hà Nội", "HCM", "Đà Nẵng", v.v.
+- **District matching**: Hỗ trợ có/không dấu
+  - "cau giay" = "cầu giấy" = "Cầu Giấy"
+  - "thanh xuan" = "thanh xuân"
+- **Auto-detect city** từ location text
+  - "Bình Dương" → filter out khi search HN
+  - "Quận 7" → auto-detect HCM
+
+### 3. Property Type
+- Chung cư / Căn hộ → `apartment`
+- Nhà phố / Nhà riêng → `house`
+- Biệt thự → `villa`
+- Đất / Đất nền → `land`
+
+## 🏗️ Architecture
+
+### Search Flow
+
+```
+User Query
+    ↓
+Query Parser (extract city, district, price, type)
+    ↓
+URL Generator (platform-specific URLs)
+    ↓
+Parallel Crawling (Crawl4AI + Playwright)
+    ├─ Batdongsan.com.vn
+    ├─ Mogi.vn
+    ├─ Alonhadat.com.vn
+    ├─ Facebook Groups
+    └─ Google Search
+    ↓
+Parser & Validator (clean + validate)
+    ↓
+Filter by Criteria (price, location, type)
+    ↓
+Deduplication (by ID hash)
+    ↓
+VectorDB Storage (optional)
+    ↓
+Return Results
+```
+
+### Crawling Mechanism
+
+**Crawl4AI Features:**
+- Async Playwright browser automation
+- CSS selector-based extraction
+- Auto-scroll and pagination
+- Proxy rotation support
+- Cache management
+
+**Selectors per Platform:**
+```python
+# Batdongsan.com.vn
+LISTING_SELECTOR = ".re__card-info"
+TITLE = ".re__card-title"
+PRICE = ".re__card-config-price"
+LOCATION = ".re__card-location"
+
+# Mogi.vn
+LISTING_SELECTOR = ".property-item"
+TITLE = ".property-title"
+...
+```
+
+## 🔧 Advanced Configuration
+
+### VectorDB Settings
+
+```python
+# storage/vector_db.py
+VECTORDB_CONFIG = {
+    "collection_name": "bds_listings",
+    "model_name": "paraphrase-multilingual-MiniLM-L12-v2",
+    "dimension": 384,
+    "distance_metric": "cosine"
+}
+```
+
+### Crawling Settings
+
+```python
+# config.py
+CRAWL_SETTINGS = {
+    "timeout": 30,              # Request timeout (seconds)
+    "max_retries": 3,           # Max retry attempts
+    "concurrent_requests": 10,  # Parallel requests
+    "delay_between": 1.0,       # Delay between requests
+    "user_agent_rotate": True,  # Rotate user agents
+}
+```
+
+### Price Range by City
+
+```python
+# services/search_service.py
+PRICE_MULTIPLIERS = {
+    "hà nội": {"min": 0.8, "max": 1.2},
+    "hồ chí minh": {"min": 0.9, "max": 1.3},
+    "đà nẵng": {"min": 0.7, "max": 1.1},
+}
 ```
 
 ## 📝 Development
 
-### Code Style
+### Add New Platform
 
-```bash
-# Format
-black .
-
-# Lint
-ruff check .
-
-# Type check
-mypy .
-```
-
-### Adding New Platform
-
-1. Add platform config to `config.py`:
-
+1. **Add CSS selectors** in `crawlers/css_selectors.py`:
 ```python
-SCRAPING_PLATFORMS["newplatform"] = {
-    "name": "New Platform",
-    "base_url": "https://...",
-    "priority": 7,
+CSS_SELECTORS["newplatform.com"] = {
+    "listing": ".listing-item",
+    "title": ".title",
+    "price": ".price",
+    ...
 }
 ```
 
-2. Implement scraper in `agents/search_agent.py`:
-
+2. **Add platform URL generator** in `services/search_service.py`:
 ```python
-async def _search_newplatform(self, intent: SearchIntent) -> list[dict]:
-    # Implementation
-    pass
+def _generate_fallback_urls(self, query):
+    # ... existing code ...
+    
+    # New platform
+    newplatform_url = f"https://newplatform.com/search?q={query}"
+    urls.append({
+        "url": newplatform_url,
+        "platform": "newplatform.com"
+    })
 ```
 
-## ⚠️ Legal Notice
+## 🐞 Troubleshooting
 
-- This tool is for educational purposes only
-- Respect robots.txt and terms of service
-- Use reasonable delays between requests
-- Do not overload target websites
+### Model không tải được
+```bash
+# Check Git LFS
+git lfs ls-files
+
+# Re-pull LFS files
+git lfs pull
+```
+
+### Crawl bị chặn
+```python
+# Tăng delay giữa requests
+DELAY_BETWEEN = 2.0
+
+# Rotate user agents
+USER_AGENT_ROTATE = True
+
+# Sử dụng proxy
+PROXY_LIST = ["http://proxy1:8080", ...]
+```
+
+### VectorDB lỗi
+```bash
+# Xóa collection và tạo lại
+rm -rf data/chroma_db/
+
+# Hoặc disable VectorDB
+VECTORDB_ENABLED=false
+```
+
+### Database không kết nối
+```ini
+# System vẫn chạy với degraded DB
+# Check logs
+tail -f logs/app.log
+```
+
+## ⚠️ Lưu ý về Model
+
+**Model được commit vào Git vì:**
+- ✅ Tránh phải download mỗi lần setup (420MB)
+- ✅ Sử dụng Git LFS để quản lý file lớn
+- ✅ Model nhỏ và cần thiết cho VectorDB
+
+**Nếu không muốn model trong repo:**
+1. Xóa folder `data/models/`
+2. Download runtime:
+```bash
+python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')"
+```
+
+**Git LFS Configuration:**
+```bash
+# .gitattributes
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.json filter=lfs diff=lfs merge=lfs -text
+```
+
+Files tracked by LFS:
+- `pytorch_model.bin` (420MB)
+- `tokenizer.json` (2.3MB)
 
 ## 📄 License
 
@@ -315,11 +515,17 @@ MIT License
 
 ## 🤝 Contributing
 
-1. Fork the repo
-2. Create feature branch
-3. Commit changes
-4. Open PR
+1. Fork repo
+2. Create feature branch: `git checkout -b feature/new-feature`
+3. Commit changes: `git commit -m "Add new feature"`
+4. Push: `git push origin feature/new-feature`
+5. Open Pull Request
+
+## 📞 Contact
+
+- GitHub: [jian131/agent-bds](https://github.com/jian131/agent-bds)
+- Issues: [agent-bds/issues](https://github.com/jian131/agent-bds/issues)
 
 ---
 
-**Built with ❤️ using browser-use + Ollama**
+Made with ❤️ by BDS Agent Team
