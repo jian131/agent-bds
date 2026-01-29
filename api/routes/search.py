@@ -4,9 +4,11 @@ Implements the main search endpoint with real-time and cached modes.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, AsyncGenerator
+import json
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from api.models import (
@@ -49,6 +51,10 @@ def listing_to_search_result(listing: dict) -> SearchResultItem:
             name=contact.get("name"),
             phone=contact.get("phone"),
             phone_clean=contact.get("phone_clean"),
+            phones=contact.get("phones", []),
+            zalo=contact.get("zalo", []),
+            facebook=contact.get("facebook", []),
+            email=contact.get("email", []),
         )
     else:
         contact_schema = None
@@ -164,6 +170,43 @@ async def search_listings(request: SearchRequest) -> SearchResponse:
         execution_time_ms=execution_time,
         synthesis=synthesis,
         errors=errors,
+    )
+
+
+@router.post("/stream")
+async def search_stream(request: SearchRequest):
+    """
+    Streaming search endpoint - returns results progressively as they are found.
+    Uses Server-Sent Events (SSE) format.
+    """
+
+    async def generate_stream() -> AsyncGenerator[str, None]:
+        """Generate SSE stream of search results"""
+
+        service = RealEstateSearchService()
+
+        try:
+            async for message in service.search_stream(
+                user_query=request.query,
+                max_results=request.max_results or 50
+            ):
+                # Convert to SSE format
+                yield f"data: {json.dumps(message, default=str, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            logger.error(f"Streaming search error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
     )
 
 

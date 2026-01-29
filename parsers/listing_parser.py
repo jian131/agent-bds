@@ -140,18 +140,83 @@ class ListingParser:
         return location
 
     def _parse_contact(self, raw: Dict) -> Dict:
-        """Parse contact info"""
+        """Enhanced contact parsing - extract phone, Zalo, Facebook, email"""
 
-        phone = raw.get('phone', '') or raw.get('contact', '')
+        # Get all contact text
+        phone_raw = raw.get('phone', '') or raw.get('contact', '')
+        description = raw.get('description', '') or ''
+        content = raw.get('content', '') or ''
 
-        # Clean phone number
-        phone_clean = re.sub(r'[^\d]', '', str(phone))
+        combined_text = f"{phone_raw} {description} {content}"
 
-        return {
-            'phone': phone,
-            'phone_clean': phone_clean if len(phone_clean) in [10, 11] else '',
-            'name': raw.get('contact_name', '')
+        contact = {
+            'phones': [],
+            'zalo': [],
+            'facebook': [],
+            'email': [],
+            'name': raw.get('contact_name', '') or raw.get('author', '')
         }
+
+        # Extract phones (VN format)
+        phone_patterns = [
+            r'0\d{9,10}',  # 0912345678
+            r'\+84\d{9,10}',  # +84912345678
+            r'84\d{9,10}',  # 84912345678
+        ]
+
+        for pattern in phone_patterns:
+            matches = re.findall(pattern, combined_text)
+            for match in matches:
+                # Normalize
+                clean = re.sub(r'[^\d]', '', match)
+                if clean.startswith('84') and len(clean) > 10:
+                    clean = '0' + clean[2:]
+
+                if len(clean) in [10, 11] and clean not in contact['phones']:
+                    contact['phones'].append(clean)
+
+        # Extract Zalo
+        zalo_patterns = [
+            r'zalo[:\s]*0\d{9,10}',
+            r'z\.?a\.?l\.?o[:\s]*0\d{9,10}',
+            r'số zalo[:\s]*0\d{9,10}',
+        ]
+
+        for pattern in zalo_patterns:
+            matches = re.findall(pattern, combined_text, re.IGNORECASE)
+            for match in matches:
+                # Extract number
+                nums = re.findall(r'0\d{9,10}', match)
+                if nums and nums[0] not in contact['zalo']:
+                    contact['zalo'].append(nums[0])
+
+        # Extract Facebook
+        fb_patterns = [
+            r'facebook\.com/[\w.]+',
+            r'fb\.com/[\w.]+',
+            r'fb\.me/[\w.]+',
+            r'fb[:\s]+([\w.]+)',
+            r'facebook[:\s]+([\w.]+)'
+        ]
+
+        for pattern in fb_patterns:
+            matches = re.findall(pattern, combined_text, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0]
+                if match and match not in contact['facebook'] and len(match) > 3:
+                    contact['facebook'].append(match)
+
+        # Extract email
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        emails = re.findall(email_pattern, combined_text)
+        contact['email'] = list(set(emails))
+
+        # Primary contact (for backward compat)
+        contact['phone'] = contact['phones'][0] if contact['phones'] else ''
+        contact['phone_clean'] = contact['phone']
+
+        return contact
 
     def _parse_number(self, value) -> int:
         """Parse number field"""

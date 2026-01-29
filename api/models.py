@@ -22,10 +22,14 @@ class LocationSchema(BaseModel):
 
 
 class ContactSchema(BaseModel):
-    """Contact information."""
+    """Contact information - enhanced with multiple contact methods."""
     name: Optional[str] = None
     phone: Optional[str] = None
     phone_clean: Optional[str] = None
+    phones: list[str] = Field(default_factory=list)
+    zalo: list[str] = Field(default_factory=list)
+    facebook: list[str] = Field(default_factory=list)
+    email: list[str] = Field(default_factory=list)
 
 
 # ============================================================================
