@@ -378,7 +378,7 @@ class VectorDB:
 
 # Singleton instance
 _vector_db: Optional[VectorDB] = None
-_vector_db_enabled: bool = False  # DISABLED - Model download too slow, enable when model is downloaded
+_vector_db_enabled: bool = True  # Model downloaded successfully!
 
 
 def get_vector_db() -> Optional[VectorDB]:
