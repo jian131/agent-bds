@@ -1,4 +1,4 @@
-# BDS Agent
+# BDS Agent - Crawl4AI Version
 
 # Environment
 .env
@@ -26,11 +26,20 @@ build/
 
 # Logs
 logs/*.log
+crawl_logs/
 
 # Data
 data/chroma/
 *.db
 *.sqlite
+
+# Crawl4AI cache
+.crawl4ai/
+.cache/
+
+# Test outputs
+search_results.json
+test_results_*.json
 
 # Credentials - NEVER COMMIT
 credentials/*.json

@@ -1,15 +1,16 @@
 """
 BDS Agent - Real Estate Search & Management System
-Main entry point for running the agent.
+Main entry point - Crawl4AI Version
 """
 import asyncio
 import sys
+import json
 from datetime import datetime
 
 from loguru import logger
 
 from config import settings
-from agents.search_agent import RealEstateSearchAgent, quick_search
+from services.search_service import RealEstateSearchService
 
 
 def setup_logging():
@@ -48,9 +49,9 @@ def setup_logging():
 
 
 async def demo_search():
-    """Demo search functionality."""
+    """Demo search functionality with Crawl4AI."""
     print("\n" + "=" * 60)
-    print("🏠 BDS Agent - Demo Search")
+    print("🏠 BDS Agent - Crawl4AI Demo")
     print("=" * 60 + "\n")
 
     # Example queries
@@ -74,55 +75,39 @@ async def demo_search():
 
     print(f"\n🔍 Đang tìm kiếm: {query}\n")
 
-    agent = RealEstateSearchAgent(headless=False)  # Show browser for demo
+    service = RealEstateSearchService()
 
     try:
-        # Search with progress updates
-        async def progress_callback(update):
-            print(f"  [{update['percent']}%] {update['message']}")
-
-        result = await agent.search_with_progress(
+        # Search with Crawl4AI
+        results = await service.search(
             query,
-            progress_callback=progress_callback,
-            max_results=10,
-            platforms=["chotot", "batdongsan"]
+            max_results=30
         )
 
         print("\n" + "-" * 60)
         print(f"📊 KẾT QUẢ TÌM KIẾM")
         print("-" * 60)
-        print(f"  Tổng số kết quả: {result.total_found}")
-        print(f"  Nguồn đã tìm: {', '.join(result.sources_searched)}")
-        print(f"  Thời gian: {result.execution_time_ms}ms")
+        print(f"  Tổng số kết quả: {len(results)}")
 
-        if result.errors:
-            print(f"  ⚠️ Lỗi: {', '.join(result.errors)}")
+        # Show sample results
+        if results:
+            print(f"\n📋 Mẫu kết quả:")
+            for i, listing in enumerate(results[:5], 1):
+                print(f"\n  {i}. {listing['title'][:80]}")
+                print(f"     💰 {listing['price_text']}")
+                print(f"     📍 {listing['location']['address'][:60]}")
+                print(f"     🌐 {listing['source_platform']}")
 
-        print("\n" + "-" * 60)
-        print("📋 CHI TIẾT LISTINGS")
-        print("-" * 60)
-
-        for i, listing in enumerate(result.listings, 1):
-            print(f"\n[{i}] {listing['title']}")
-            print(f"    💰 Giá: {listing.get('price_text', 'N/A')}")
-            print(f"    📐 Diện tích: {listing.get('area_m2', 'N/A')} m²")
-            print(f"    📍 Địa chỉ: {listing.get('location', {}).get('address', 'N/A')}")
-            print(f"    📞 Liên hệ: {listing.get('contact', {}).get('phone_clean', 'N/A')}")
-            print(f"    🔗 Nguồn: {listing.get('source_url', 'N/A')[:50]}...")
-
-        if not result.listings:
+            # Save to JSON
+            with open("search_results.json", "w", encoding="utf-8") as f:
+                json.dump(results, f, indent=2, ensure_ascii=False, default=str)
+            print(f"\n  💾 Đã lưu vào search_results.json")
+        else:
             print("\n  ❌ Không tìm thấy kết quả nào")
 
     except Exception as e:
         logger.error(f"Search error: {e}")
         print(f"\n❌ Lỗi: {e}")
-
-    finally:
-        await agent.close()
-
-    print("\n" + "=" * 60)
-
-
 async def interactive_mode():
     """Interactive search mode."""
     print("\n" + "=" * 60)

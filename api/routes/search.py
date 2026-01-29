@@ -17,7 +17,7 @@ from api.models import (
     ContactSchema,
     ErrorResponse,
 )
-from agents.search_agent import RealEstateSearchAgent
+from services.search_service import RealEstateSearchService
 from storage.vector_db import semantic_search, get_vector_db
 from storage.database import get_session, ListingCRUD
 from services.validator import get_validator
@@ -121,29 +121,24 @@ async def search_listings(request: SearchRequest) -> SearchResponse:
         if len(results) < 10 and request.search_realtime:
             from_cache = False
 
-            agent = RealEstateSearchAgent(headless=True)
+            service = RealEstateSearchService()
             try:
-                search_result = await agent.search(
+                search_results = await service.search(
                     request.query,
-                    max_results=request.max_results,
-                    platforms=request.platforms or ["chotot", "batdongsan"],
+                    max_results=request.max_results
                 )
 
-                sources.extend(search_result.sources_searched)
-                errors.extend(search_result.errors)
-                synthesis = search_result.synthesis
+                sources.append("crawl4ai_realtime")
 
                 # Add real-time results
-                for listing in search_result.listings:
+                for listing in search_results:
                     results.append(listing_to_search_result(listing))
 
-                # Save to vector DB for future searches
-                if search_result.listings:
-                    from storage.vector_db import index_listings
-                    await index_listings(search_result.listings)
+                logger.info(f"Real-time search returned {len(search_results)} listings")
 
-            finally:
-                await agent.close()
+            except Exception as e:
+                logger.error(f"Real-time search error: {e}")
+                errors.append(str(e))
 
         # Deduplicate by ID
         seen_ids = set()

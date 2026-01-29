@@ -60,20 +60,22 @@ class Settings(BaseSettings):
     telegram_chat_id: Optional[str] = None
     telegram_admin_chat_id: Optional[str] = None
 
-    # Scraping
-    scrape_delay_min: int = 2
-    scrape_delay_max: int = 5
-    scrape_max_pages: int = 10
+    # Scraping - Crawl4AI Settings
+    max_concurrent_crawls: int = 5  # Parallel crawls
+    crawl_cache_enabled: bool = True
+    crawl_timeout: int = 30000  # milliseconds
+    scrape_delay_min: int = 1  # Faster with Crawl4AI
+    scrape_delay_max: int = 3
+    scrape_max_pages: int = 20  # Can handle more with parallel
     headless_mode: bool = True
-    browser_use_vision: bool = False
 
     # Google-First Search Settings
     google_search_enabled: bool = True
-    max_urls_per_search: int = 8
-    max_steps_google_search: int = 6
-    max_steps_per_url: int = 4
-    delay_between_urls: int = 20  # seconds - Groq rate limit safe
-    rate_limit_per_minute: int = 25  # Groq limit is 30, use 25 for buffer
+    google_max_results: int = 15  # URLs from Google
+    max_listings_per_search: int = 50  # Total listings to return
+    max_urls_per_search: int = 15  # Max URLs to crawl
+    delay_between_urls: int = 1  # Faster with async
+    rate_limit_per_minute: int = 30  # Groq limit
 
     # Validation - Price per m2 in VND
     price_min_per_m2: int = 20_000_000  # 20 triệu/m2
