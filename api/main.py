@@ -62,14 +62,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning("⚠️ Database init skipped (tables may already exist)", error=str(e))
 
-    # Initialize vector database
-    try:
-        vector_db = VectorDB()
-        app.state.vector_db = vector_db
-        logger.info("✅ Vector database initialized")
-    except Exception as e:
-        logger.error("⚠️ Vector DB init failed (continuing)", error=str(e))
-        app.state.vector_db = None
+    # Initialize vector database (lazy - will init on first use)
+    # Skip during startup to avoid blocking on model download
+    app.state.vector_db = None
+    logger.info("⏳ Vector database will initialize on first use")
 
     # Setup scheduler
     try:

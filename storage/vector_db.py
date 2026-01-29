@@ -378,25 +378,39 @@ class VectorDB:
 
 # Singleton instance
 _vector_db: Optional[VectorDB] = None
+_vector_db_enabled: bool = False  # DISABLED - Model download too slow, enable when model is downloaded
 
 
-def get_vector_db() -> VectorDB:
-    """Get or create vector DB instance."""
-    global _vector_db
+def get_vector_db() -> Optional[VectorDB]:
+    """Get or create vector DB instance. Returns None if disabled or failed."""
+    global _vector_db, _vector_db_enabled
+
+    if not _vector_db_enabled:
+        return None
+
     if _vector_db is None:
-        _vector_db = VectorDB()
+        try:
+            _vector_db = VectorDB()
+        except Exception as e:
+            logger.warning(f"VectorDB init failed, disabling: {e}")
+            _vector_db_enabled = False
+            return None
     return _vector_db
 
 
-async def index_listing(listing: dict) -> str:
+async def index_listing(listing: dict) -> Optional[str]:
     """Convenience function to index a listing."""
     db = get_vector_db()
+    if db is None:
+        return None
     return await db.add_listing(listing)
 
 
 async def index_listings(listings: list[dict]) -> list[str]:
     """Convenience function to index multiple listings."""
     db = get_vector_db()
+    if db is None:
+        return []
     return await db.add_listings(listings)
 
 
@@ -405,8 +419,11 @@ async def semantic_search(
     n_results: int = 10,
     filters: Optional[dict] = None,
 ) -> list[dict]:
-    """Convenience function for semantic search."""
+    """Convenience function for semantic search. Returns empty if DB unavailable."""
     db = get_vector_db()
+    if db is None:
+        logger.debug("VectorDB not available, skipping semantic search")
+        return []
     return await db.search(query, n_results, filters)
 
 
@@ -416,4 +433,6 @@ async def find_similar_listings(
 ) -> list[dict]:
     """Convenience function to find similar listings."""
     db = get_vector_db()
+    if db is None:
+        return []
     return await db.find_similar(listing_id, n_results)
