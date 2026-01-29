@@ -18,6 +18,11 @@ ENV/
 dist/
 build/
 
+# Model cache (from HuggingFace)
+data/models/models--*
+data/models/.locks/
+*.incomplete
+
 # IDE
 .vscode/
 .idea/

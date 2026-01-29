@@ -114,14 +114,20 @@ class RealEstateSearchService:
         validated_listings = await self.parser.parse_and_validate_batch(all_raw_listings)
         unique_listings = self._deduplicate(validated_listings)
 
+        # Step 3.5: Filter by price from query
+        parsed_query = self._parse_query(user_query)
+        filtered_listings = self._filter_by_criteria(unique_listings, parsed_query)
+
+        yield {'type': 'status', 'message': f'Filtered to {len(filtered_listings)} matching listings'}
+
         # Yield results one by one for progressive loading
-        for listing in unique_listings[:max_results]:
+        for listing in filtered_listings[:max_results]:
             yield {'type': 'result', 'data': self._serialize_listing(listing)}
 
         elapsed = time.time() - start_time
         yield {
             'type': 'complete',
-            'total': len(unique_listings),
+            'total': len(filtered_listings),
             'time': elapsed,
             'platforms': list(platforms_crawled)
         }
@@ -233,15 +239,20 @@ class RealEstateSearchService:
         unique_listings = self._deduplicate(validated_listings)
         print(f"✅ {len(unique_listings)} unique listings after deduplication")
 
+        # Step 4.5: Filter by price and location from query
+        parsed_query = self._parse_query(user_query)
+        filtered_listings = self._filter_by_criteria(unique_listings, parsed_query)
+        print(f"✅ {len(filtered_listings)} listings after filtering by criteria")
+
         # Step 5: Save to storage (skip DB for now - no PostgreSQL running)
         # Storage saves disabled for demo - just return results
         print(f"\n⏭️ Storage skipped (demo mode)")
 
         elapsed = time.time() - start_time
         print(f"\n⏱️  Total time: {elapsed:.1f}s")
-        print(f"⚡ Speed: {elapsed/max(len(unique_listings), 1):.2f}s per listing")
+        print(f"⚡ Speed: {elapsed/max(len(filtered_listings), 1):.2f}s per listing")
 
-        return unique_listings[:max_results]
+        return filtered_listings[:max_results]
 
     def _deduplicate(self, listings: List[Dict]) -> List[Dict]:
         """Remove duplicate listings by ID"""
@@ -258,55 +269,374 @@ class RealEstateSearchService:
         return unique
 
     def _generate_fallback_urls(self, query: str) -> List[Dict]:
-        """Generate direct platform URLs when Google search fails"""
+        """Generate direct platform URLs with filters from query"""
 
-        query_lower = query.lower()
+        parsed = self._parse_query(query)
         urls = []
 
-        # Detect location
-        is_hanoi = any(x in query_lower for x in ['hà nội', 'ha noi', 'hanoi', 'cầu giấy', 'đống đa', 'hai bà trưng'])
-        is_hcm = any(x in query_lower for x in ['hồ chí minh', 'sài gòn', 'saigon', 'hcm', 'quận 1', 'quận 7'])
+        city_path = parsed['city_path']
+        property_path = parsed['property_path']
+        district_path = parsed['district_path']
+        price_params = parsed['price_params']
 
-        # Detect property type
-        is_apartment = any(x in query_lower for x in ['chung cư', 'căn hộ', 'apartment'])
-        is_house = any(x in query_lower for x in ['nhà', 'house', 'biệt thự'])
-        is_land = any(x in query_lower for x in ['đất', 'land'])
-
-        # Build base path
-        city_path = 'ha-noi' if is_hanoi else ('ho-chi-minh' if is_hcm else 'ha-noi')
-
-        if is_apartment:
-            property_path = 'ban-can-ho-chung-cu'
-        elif is_house:
-            property_path = 'ban-nha'
-        elif is_land:
-            property_path = 'ban-dat'
+        # Batdongsan.com.vn (primary) - Use district filter properly
+        # Note: Don't add price params to URL - batdongsan ignores them anyway
+        if district_path:
+            # District-specific URL format
+            bds_url = f'https://batdongsan.com.vn/{property_path}-{district_path}'
         else:
-            property_path = 'ban-can-ho-chung-cu'  # Default to apartments
+            bds_url = f'https://batdongsan.com.vn/{property_path}-{city_path}'
 
-        # Batdongsan.com.vn (primary)
         urls.append({
-            'url': f'https://batdongsan.com.vn/{property_path}-{city_path}',
+            'url': bds_url,
             'platform': 'batdongsan.com.vn',
             'priority': 1
         })
 
+        # Also add city-level URL to get more results
+        if district_path:
+            city_url = f'https://batdongsan.com.vn/{property_path}-{city_path}'
+            urls.append({
+                'url': city_url,
+                'platform': 'batdongsan.com.vn',
+                'priority': 2
+            })
+
         # Mogi.vn
-        mogi_path = 'mua-can-ho' if is_apartment else ('mua-nha-dat' if is_house else 'mua-dat')
+        mogi_property = 'mua-can-ho' if 'chung-cu' in property_path else 'mua-nha-dat'
+        mogi_url = f'https://mogi.vn/{mogi_property}/{city_path}'
+        if district_path:
+            mogi_url = f'https://mogi.vn/{mogi_property}/{district_path}'
+        if price_params.get('mogi'):
+            mogi_url += price_params['mogi']
         urls.append({
-            'url': f'https://mogi.vn/{mogi_path}/{city_path}',
+            'url': mogi_url,
             'platform': 'mogi.vn',
             'priority': 2
         })
 
         # Alonhadat
+        alo_url = f'https://alonhadat.com.vn/{property_path}/{city_path}.html'
+        if price_params.get('alonhadat'):
+            alo_url += price_params['alonhadat']
         urls.append({
-            'url': f'https://alonhadat.com.vn/{property_path}/{city_path}.html',
+            'url': alo_url,
             'platform': 'alonhadat.com.vn',
             'priority': 2
         })
 
+        print(f"\n📍 Parsed query: {parsed}")
+        print(f"🔗 Generated URLs:")
+        for u in urls:
+            print(f"   {u['platform']}: {u['url']}")
+
         return urls
+
+    def _parse_query(self, query: str) -> Dict:
+        """Parse user query to extract location, price, property type"""
+
+        query_lower = query.lower()
+        result = {
+            'city': 'Hà Nội',
+            'city_path': 'ha-noi',
+            'district': None,
+            'district_path': None,
+            'property_type': 'apartment',
+            'property_path': 'ban-can-ho-chung-cu',
+            'price_min': None,
+            'price_max': None,
+            'price_params': {}
+        }
+
+        # === CITY DETECTION ===
+        city_mapping = {
+            'hồ chí minh': ('Hồ Chí Minh', 'ho-chi-minh'),
+            'sài gòn': ('Hồ Chí Minh', 'ho-chi-minh'),
+            'saigon': ('Hồ Chí Minh', 'ho-chi-minh'),
+            'hcm': ('Hồ Chí Minh', 'ho-chi-minh'),
+            'đà nẵng': ('Đà Nẵng', 'da-nang'),
+            'da nang': ('Đà Nẵng', 'da-nang'),
+            'hải phòng': ('Hải Phòng', 'hai-phong'),
+            'cần thơ': ('Cần Thơ', 'can-tho'),
+            'bình dương': ('Bình Dương', 'binh-duong'),
+            'đồng nai': ('Đồng Nai', 'dong-nai'),
+            'hà nội': ('Hà Nội', 'ha-noi'),
+            'ha noi': ('Hà Nội', 'ha-noi'),
+            'hanoi': ('Hà Nội', 'ha-noi'),
+        }
+
+        for key, (city_name, city_path) in city_mapping.items():
+            if key in query_lower:
+                result['city'] = city_name
+                result['city_path'] = city_path
+                break
+
+        # === DISTRICT DETECTION (Hà Nội) ===
+        hanoi_districts = {
+            'cầu giấy': 'quan-cau-giay',
+            'cau giay': 'quan-cau-giay',
+            'đống đa': 'quan-dong-da',
+            'dong da': 'quan-dong-da',
+            'hai bà trưng': 'quan-hai-ba-trung',
+            'hai ba trung': 'quan-hai-ba-trung',
+            'hoàn kiếm': 'quan-hoan-kiem',
+            'hoan kiem': 'quan-hoan-kiem',
+            'ba đình': 'quan-ba-dinh',
+            'ba dinh': 'quan-ba-dinh',
+            'tây hồ': 'quan-tay-ho',
+            'tay ho': 'quan-tay-ho',
+            'thanh xuân': 'quan-thanh-xuan',
+            'thanh xuan': 'quan-thanh-xuan',
+            'hoàng mai': 'quan-hoang-mai',
+            'hoang mai': 'quan-hoang-mai',
+            'long biên': 'quan-long-bien',
+            'long bien': 'quan-long-bien',
+            'nam từ liêm': 'quan-nam-tu-liem',
+            'nam tu liem': 'quan-nam-tu-liem',
+            'bắc từ liêm': 'quan-bac-tu-liem',
+            'bac tu liem': 'quan-bac-tu-liem',
+            'hà đông': 'quan-ha-dong',
+            'ha dong': 'quan-ha-dong',
+            'gia lâm': 'huyen-gia-lam',
+            'gia lam': 'huyen-gia-lam',
+        }
+
+        # === DISTRICT DETECTION (HCM) ===
+        hcm_districts = {
+            'quận 1': 'quan-1',
+            'quan 1': 'quan-1',
+            'quận 2': 'quan-2',
+            'quan 2': 'quan-2',
+            'quận 3': 'quan-3',
+            'quan 3': 'quan-3',
+            'quận 7': 'quan-7',
+            'quan 7': 'quan-7',
+            'bình thạnh': 'quan-binh-thanh',
+            'binh thanh': 'quan-binh-thanh',
+            'tân bình': 'quan-tan-binh',
+            'tan binh': 'quan-tan-binh',
+            'phú nhuận': 'quan-phu-nhuan',
+            'phu nhuan': 'quan-phu-nhuan',
+            'gò vấp': 'quan-go-vap',
+            'go vap': 'quan-go-vap',
+            'thủ đức': 'tp-thu-duc',
+            'thu duc': 'tp-thu-duc',
+        }
+
+        districts = hanoi_districts if result['city_path'] == 'ha-noi' else hcm_districts
+        for key, district_path in districts.items():
+            if key in query_lower:
+                result['district'] = key
+                result['district_path'] = district_path
+                break
+
+        # === PROPERTY TYPE ===
+        if any(x in query_lower for x in ['chung cư', 'căn hộ', 'apartment', 'cc']):
+            result['property_type'] = 'apartment'
+            result['property_path'] = 'ban-can-ho-chung-cu'
+        elif any(x in query_lower for x in ['nhà phố', 'nhà riêng', 'house']):
+            result['property_type'] = 'house'
+            result['property_path'] = 'ban-nha-rieng'
+        elif any(x in query_lower for x in ['biệt thự', 'villa']):
+            result['property_type'] = 'villa'
+            result['property_path'] = 'ban-biet-thu-lien-ke'
+        elif any(x in query_lower for x in ['đất', 'land', 'đất nền']):
+            result['property_type'] = 'land'
+            result['property_path'] = 'ban-dat'
+
+        # === PRICE PARSING ===
+        import re
+
+        # Pattern: "X tỷ", "X-Y tỷ", "dưới X tỷ", "trên X tỷ"
+        price_patterns = [
+            (r'(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*t[yỷ]', 'range'),  # 2-3 tỷ
+            (r'dưới\s*(\d+(?:[.,]\d+)?)\s*t[yỷ]', 'max'),  # dưới 2 tỷ
+            (r'trên\s*(\d+(?:[.,]\d+)?)\s*t[yỷ]', 'min'),  # trên 2 tỷ
+            (r'(\d+(?:[.,]\d+)?)\s*t[yỷ]', 'exact'),  # 2 tỷ
+            (r'(\d+)\s*triệu', 'million'),  # 500 triệu
+        ]
+
+        for pattern, ptype in price_patterns:
+            match = re.search(pattern, query_lower)
+            if match:
+                if ptype == 'range':
+                    result['price_min'] = float(match.group(1).replace(',', '.'))
+                    result['price_max'] = float(match.group(2).replace(',', '.'))
+                elif ptype == 'max':
+                    result['price_max'] = float(match.group(1).replace(',', '.'))
+                elif ptype == 'min':
+                    result['price_min'] = float(match.group(1).replace(',', '.'))
+                elif ptype == 'exact':
+                    price = float(match.group(1).replace(',', '.'))
+                    result['price_min'] = price * 0.8  # ±20%
+                    result['price_max'] = price * 1.2
+                elif ptype == 'million':
+                    price = float(match.group(1)) / 1000  # Convert to tỷ
+                    result['price_min'] = price * 0.8
+                    result['price_max'] = price * 1.2
+                break
+
+        # === BUILD PRICE PARAMS FOR EACH PLATFORM ===
+        if result['price_min'] or result['price_max']:
+            min_price = result['price_min'] or 0
+            max_price = result['price_max'] or 100
+
+            # Batdongsan: ?gia_tu=X&gia_den=Y (billion VND)
+            result['price_params']['batdongsan'] = f'?gia_tu={min_price}&gia_den={max_price}'
+
+            # Mogi: ?cp=X-Y (billion VND)
+            result['price_params']['mogi'] = f'?cp={min_price}-{max_price}'
+
+            # Alonhadat: ?gia=X-Y
+            result['price_params']['alonhadat'] = f'?gia={int(min_price)}-{int(max_price)}'
+
+        return result
+
+    def _parse_price_text(self, price_text: str) -> Optional[float]:
+        """Parse price text like '2,5 tỷ', '500 triệu' to float (in tỷ)"""
+        import re
+
+        if not price_text:
+            return None
+
+        price_lower = price_text.lower().replace(',', '.').replace(' ', '')
+
+        # Pattern: X.Y tỷ or X tỷ
+        ty_match = re.search(r'([\d.]+)\s*t[yỷ]', price_lower)
+        if ty_match:
+            return float(ty_match.group(1))
+
+        # Pattern: X triệu
+        trieu_match = re.search(r'([\d.]+)\s*tri[eệ]u', price_lower)
+        if trieu_match:
+            return float(trieu_match.group(1)) / 1000  # Convert to tỷ
+
+        # Just number (assume tỷ if > 10, triệu otherwise)
+        num_match = re.search(r'([\d.]+)', price_lower)
+        if num_match:
+            val = float(num_match.group(1))
+            return val if val < 100 else val / 1000
+
+        return None
+
+    def _filter_by_criteria(self, listings: List[Dict], parsed_query: Dict) -> List[Dict]:
+        """Filter listings by price, location from parsed query"""
+
+        filtered = []
+        price_min = parsed_query.get('price_min')
+        price_max = parsed_query.get('price_max')
+        district = parsed_query.get('district')
+        city = parsed_query.get('city', 'Hà Nội')
+
+        print(f"\n🔍 Filtering {len(listings)} listings...")
+        print(f"   Price range: {price_min}-{price_max} tỷ")
+        print(f"   District: {district}")
+        print(f"   City: {city}")
+
+        for listing in listings:
+            passes_price = True
+            passes_location = True
+
+            # === PRICE FILTER (relaxed - 30% tolerance) ===
+            if price_min or price_max:
+                # Try price_number first (from parser), then price_text
+                price = listing.get('price_number') or listing.get('price')
+                price_text = listing.get('price_text') or listing.get('price', '')
+
+                if price and isinstance(price, (int, float)) and price > 0:
+                    price_val = price
+                    # Convert to tỷ if in VND
+                    if price_val > 1_000_000:  # More than 1 million = likely VND
+                        price_val = price_val / 1_000_000_000  # Convert to tỷ
+                else:
+                    price_val = self._parse_price_text(str(price_text) if price_text else '')
+
+                if price_val is None or price_val == 0:
+                    passes_price = True  # Don't filter out "thỏa thuận"
+                else:
+                    # Add 30% tolerance
+                    tolerance = 0.3
+                    min_check = (price_min * (1 - tolerance)) if price_min else 0
+                    max_check = (price_max * (1 + tolerance)) if price_max else 1000
+
+                    passes_price = min_check <= price_val <= max_check
+
+            # === LOCATION FILTER ===
+            if district or city:
+                location = listing.get('location', {})
+
+                if isinstance(location, dict):
+                    location_str = ' '.join([
+                        str(location.get('address', '')),
+                        str(location.get('ward', '')),
+                        str(location.get('district', '')),
+                        str(location.get('city', ''))
+                    ]).lower()
+                else:
+                    location_str = str(location).lower()
+
+                title = listing.get('title', '').lower()
+                full_text = f"{location_str} {title}"
+
+                # City check (required)
+                city_lower = city.lower()
+                city_variants = [city_lower, city_lower.replace(' ', '')]
+                if 'hà nội' in city_lower:
+                    city_variants.extend(['ha noi', 'hanoi', 'hà nội'])
+                elif 'hồ chí minh' in city_lower:
+                    city_variants.extend(['hcm', 'saigon', 'sài gòn', 'ho chi minh'])
+
+                city_match = any(v in full_text for v in city_variants)
+                if not city_match:
+                    passes_location = False
+
+                # District check (optional, stricter)
+                if district and passes_location:
+                    district_lower = district.lower()
+                    district_variants = [
+                        district_lower,
+                        district_lower.replace(' ', '')
+                    ]
+                    if 'cầu giấy' in district_lower or 'cau giay' in district_lower:
+                        district_variants.extend(['cầu giấy', 'cau giay', 'caugiay'])
+
+                    district_match = any(v in full_text for v in district_variants)
+                    # District is optional - don't strictly filter
+                    if not district_match:
+                        # Still allow, but we could rank lower
+                        pass
+
+            if passes_price and passes_location:
+                filtered.append(listing)
+
+        print(f"   ✅ {len(filtered)} listings passed filter")
+
+        # If filter too strict, return top results anyway
+        if not filtered and listings:
+            print(f"⚠️ Filter too strict, returning top 10 results from correct city")
+            # At minimum, filter by city
+            for listing in listings:
+                location = listing.get('location', {})
+                if isinstance(location, dict):
+                    location_str = str(location.get('city', '')) + ' ' + str(location.get('address', ''))
+                else:
+                    location_str = str(location)
+
+                city_lower = city.lower()
+                if city_lower.replace(' ', '') in location_str.lower().replace(' ', ''):
+                    filtered.append(listing)
+                elif 'ha noi' in city_lower and 'hà nội' in location_str.lower():
+                    filtered.append(listing)
+                elif 'hcm' in location_str.lower() and 'hồ chí minh' in city_lower:
+                    filtered.append(listing)
+
+            if filtered:
+                return filtered[:10]
+            else:
+                print(f"⚠️ No listings match even city filter, returning top 10")
+                return listings[:10]
+
+        return filtered
 
     async def health_check(self) -> Dict:
         """Check service health"""

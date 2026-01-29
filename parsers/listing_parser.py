@@ -121,8 +121,59 @@ class ListingParser:
             'address': location_text,
             'ward': '',
             'district': '',
-            'city': 'Hà Nội'
+            'city': ''  # Will be detected below
         }
+
+        location_lower = location_text.lower()
+
+        # Detect city first
+        city_mappings = {
+            'hà nội': 'Hà Nội',
+            'ha noi': 'Hà Nội',
+            'hanoi': 'Hà Nội',
+            'hồ chí minh': 'Hồ Chí Minh',
+            'hcm': 'Hồ Chí Minh',
+            'sài gòn': 'Hồ Chí Minh',
+            'saigon': 'Hồ Chí Minh',
+            'đà nẵng': 'Đà Nẵng',
+            'da nang': 'Đà Nẵng',
+            'bình dương': 'Bình Dương',
+            'binh duong': 'Bình Dương',
+            'đồng nai': 'Đồng Nai',
+            'hưng yên': 'Hưng Yên',
+            'hung yen': 'Hưng Yên',
+            'bắc ninh': 'Bắc Ninh',
+            'hải phòng': 'Hải Phòng',
+            'cần thơ': 'Cần Thơ',
+        }
+
+        for key, city in city_mappings.items():
+            if key in location_lower:
+                location['city'] = city
+                break
+
+        # If no city found, try to detect from district
+        if not location['city']:
+            # Check for HN districts
+            hn_districts = ['ba đình', 'hoàn kiếm', 'tây hồ', 'long biên',
+                           'cầu giấy', 'đống đa', 'hai bà trưng', 'hoàng mai',
+                           'thanh xuân', 'nam từ liêm', 'bắc từ liêm', 'hà đông',
+                           'gia lâm', 'đông anh', 'hoài đức']
+            # Check for HCM districts
+            hcm_districts = ['quận 1', 'quận 2', 'quận 3', 'quận 7', 'quận 9',
+                            'bình thạnh', 'tân bình', 'phú nhuận', 'gò vấp',
+                            'thủ đức', 'bình tân', 'tân phú']
+
+            for d in hn_districts:
+                if d in location_lower:
+                    location['city'] = 'Hà Nội'
+                    break
+
+            if not location['city']:
+                for d in hcm_districts:
+                    if d in location_lower:
+                        location['city'] = 'Hồ Chí Minh'
+                        break
 
         # Extract district
         districts = [

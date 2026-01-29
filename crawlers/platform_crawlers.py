@@ -107,6 +107,10 @@ class PlatformCrawler(BaseCrawler):
                 listing['source_platform'] = platform
                 listing['source_url'] = self._normalize_url(listing.get('url'), base_url)
 
+                # Copy price to price_text for filtering
+                if listing.get('price'):
+                    listing['price_text'] = listing['price']
+
                 # Validate
                 if listing.get('title') and listing.get('price'):
                     listings.append(listing)
