@@ -203,10 +203,10 @@ class RealEstateSearchService:
 
         print(f"\nCrawled {len(all_raw_listings)} raw listings")
 
-        # If no results from crawling (sites block bots), use demo data
+        # If no results from crawling, return empty (no fake data)
         if not all_raw_listings:
-            print("⚠️ Sites blocked bot requests - using demo data")
-            all_raw_listings = self._generate_demo_listings(user_query)
+            print("⚠️ No results from crawling - returning empty list (no fake data)")
+            return []
 
         # Step 3: Parse and validate
         print(f"\n🔍 Parsing and validating...")
