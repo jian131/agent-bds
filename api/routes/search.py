@@ -123,8 +123,9 @@ async def search_listings(request: SearchRequest) -> SearchResponse:
             for r in vector_results:
                 results.append(listing_to_search_result(r))
 
-        # Step 2: If not enough results and real-time requested, scrape
-        if len(results) < 10 and request.search_realtime:
+        # Step 2: If not enough results, always perform real-time search using orchestrator
+        # (previously only when search_realtime=True, now always when cache is insufficient)
+        if len(results) < 10:
             from_cache = False
 
             service = RealEstateSearchService()
@@ -134,7 +135,7 @@ async def search_listings(request: SearchRequest) -> SearchResponse:
                     max_results=request.max_results
                 )
 
-                sources.append("crawl4ai_realtime")
+                sources.append("orchestrator_realtime")
 
                 # Add real-time results
                 for listing in search_results:

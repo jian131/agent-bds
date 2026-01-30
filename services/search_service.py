@@ -543,7 +543,7 @@ class RealEstateSearchService:
 
             # === LOCATION FILTER ===
             if district or city:
-                # Handle both formats: 
+                # Handle both formats:
                 # 1. orchestrator: city, district at top level
                 # 2. old parser: nested location dict
                 location = listing.get('location', {})
