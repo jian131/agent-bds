@@ -60,14 +60,24 @@ class RealEstateSearchService:
                 limit=max_results
             )
 
-            total_found = result.total_found
+            total_found = result.total_listings
             listings = result.listings
             platforms = result.platforms_searched
+
+            # Convert UnifiedListing objects to dicts
+            listings_dicts = []
+            for listing in listings:
+                if hasattr(listing, 'to_dict'):
+                    listings_dicts.append(listing.to_dict())
+                elif hasattr(listing, '__dict__'):
+                    listings_dicts.append(vars(listing))
+                else:
+                    listings_dicts.append(listing)
 
             yield {'type': 'status', 'message': f'✅ Tìm thấy {total_found} tin đăng từ {platforms} nền tảng'}
 
             # Filter by criteria from parsed query
-            filtered_listings = self._filter_by_criteria(listings, parsed_query)
+            filtered_listings = self._filter_by_criteria(listings_dicts, parsed_query)
 
             yield {'type': 'status', 'message': f'Lọc được {len(filtered_listings)} tin phù hợp'}
 
@@ -84,6 +94,8 @@ class RealEstateSearchService:
             }
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             yield {'type': 'error', 'message': f'Lỗi khi tìm kiếm: {str(e)}'}
             yield {'type': 'complete', 'total': 0, 'time': time.time() - start_time}
 
