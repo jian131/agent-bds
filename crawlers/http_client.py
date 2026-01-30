@@ -1,25 +1,25 @@
 """
-Polite HTTP Client with rate limiting, retries, and backoff.
-NO bypass techniques - compliant with site policies.
+HTTP Client with stealth features for bypassing anti-bot protection.
+
+Features:
+- Rotating User-Agents (real browser fingerprints)
+- Browser-like headers
+- Proxy support (HTTP/SOCKS5)
+- Cookie persistence
+- Rate limiting with jitter
+- Automatic retry with backoff
 """
 
 import asyncio
 import random
 import time
-from typing import Optional, Dict, Any, Tuple
+import os
+from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from functools import lru_cache
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-    before_sleep_log,
-)
 from cachetools import TTLCache
 
 from core.logging import get_logger, CrawlLogger
@@ -27,66 +27,145 @@ from core.logging import get_logger, CrawlLogger
 logger = get_logger(__name__)
 
 
+# Real browser User-Agents (updated 2024-2025)
+USER_AGENTS = [
+    # Chrome on Windows (most common)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    # Chrome on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    # Firefox on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    # Firefox on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0",
+    # Edge on Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+    # Safari on Mac
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    # Mobile Chrome (for variety)
+    "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1",
+]
+
+# Browser-like headers for HTML pages
+BROWSER_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "cross-site",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+    "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Pragma": "no-cache",
+}
+
+# API-specific headers (for JSON endpoints)
+API_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "sec-ch-ua": '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+}
+
+
 @dataclass
 class RequestStats:
     """Statistics for a domain."""
     request_count: int = 0
     error_count: int = 0
+    success_count: int = 0
     last_request_time: float = 0
     blocked_until: Optional[datetime] = None
     consecutive_403s: int = 0
+    last_user_agent: str = ""
+
+
+@dataclass
+class ProxyConfig:
+    """Proxy configuration."""
+    url: str  # http://user:pass@host:port or socks5://host:port
+    enabled: bool = True
+
+    @classmethod
+    def from_env(cls) -> Optional["ProxyConfig"]:
+        """Load proxy from environment variables."""
+        proxy_url = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or os.getenv("PROXY_URL")
+        if proxy_url:
+            return cls(url=proxy_url, enabled=True)
+        return None
 
 
 class PoliteHttpClient:
     """
-    HTTP client that respects rate limits and site policies.
+    HTTP client with stealth features for bypassing anti-bot protection.
 
     Features:
-    - Per-domain rate limiting
-    - Jittered exponential backoff
-    - Automatic retry with configurable attempts
-    - Request caching (optional)
-    - Proper User-Agent identification
-    - Graceful handling of 403/429 responses
+    - Rotating User-Agents (real browser fingerprints)
+    - Browser-like headers with sec-ch-ua
+    - Proxy support (HTTP/SOCKS5)
+    - Cookie persistence per domain
+    - Per-domain rate limiting with jitter
+    - Automatic retry with exponential backoff (5 retries for 403)
+    - Referer chain simulation
     """
-
-    # Identify as a bot - honest User-Agent
-    USER_AGENT = "BDSAgent/2.1 (+https://github.com/jian131/agent-bds; real-estate-search-bot)"
-
-    # Browser-like headers for sites that require it (still honest about being a bot)
-    BROWSER_LIKE_HEADERS = {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate",
-        "Connection": "keep-alive",
-        "DNT": "1",
-    }
 
     def __init__(
         self,
-        rate_limit_rpm: int = 30,
+        rate_limit_rpm: int = 15,  # Lower rate for stealth
         timeout_seconds: int = 30,
-        max_retries: int = 3,
+        max_retries: int = 5,  # More retries for anti-bot bypass
         cache_ttl_seconds: int = 300,
         enable_cache: bool = True,
+        proxy: Optional[ProxyConfig] = None,
     ):
         self.rate_limit_rpm = rate_limit_rpm
-        self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+        self.timeout = httpx.Timeout(timeout_seconds, connect=15.0)
         self.max_retries = max_retries
         self.enable_cache = enable_cache
 
+        # Proxy configuration
+        self.proxy = proxy or ProxyConfig.from_env()
+
         # Per-domain stats
         self._domain_stats: Dict[str, RequestStats] = {}
+
+        # Per-domain cookies
+        self._cookies: Dict[str, httpx.Cookies] = {}
 
         # Response cache
         self._cache: TTLCache = TTLCache(maxsize=1000, ttl=cache_ttl_seconds)
 
         # Semaphore for concurrent request limiting
-        self._semaphore = asyncio.Semaphore(5)
+        self._semaphore = asyncio.Semaphore(3)  # Lower concurrency for stealth
+
+        # Track last referer per domain
+        self._last_referer: Dict[str, str] = {}
 
     def _get_domain(self, url: str) -> str:
         """Extract domain from URL."""
         return urlparse(url).netloc
+
+    def _get_base_url(self, url: str) -> str:
+        """Get base URL (scheme + domain)."""
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     def _get_stats(self, domain: str) -> RequestStats:
         """Get or create stats for domain."""
@@ -94,8 +173,47 @@ class PoliteHttpClient:
             self._domain_stats[domain] = RequestStats()
         return self._domain_stats[domain]
 
+    def _get_cookies(self, domain: str) -> httpx.Cookies:
+        """Get or create cookie jar for domain."""
+        if domain not in self._cookies:
+            self._cookies[domain] = httpx.Cookies()
+        return self._cookies[domain]
+
+    def _get_random_user_agent(self) -> str:
+        """Get a random User-Agent."""
+        return random.choice(USER_AGENTS)
+
+    def _get_headers(self, url: str, is_api: bool = False) -> Dict[str, str]:
+        """Get browser-like headers for request."""
+        domain = self._get_domain(url)
+        stats = self._get_stats(domain)
+
+        # Rotate User-Agent occasionally (not every request - more realistic)
+        if not stats.last_user_agent or random.random() < 0.15:
+            stats.last_user_agent = self._get_random_user_agent()
+
+        # Choose header template
+        base_headers = API_HEADERS.copy() if is_api else BROWSER_HEADERS.copy()
+
+        headers = {
+            "User-Agent": stats.last_user_agent,
+            **base_headers,
+        }
+
+        # Add realistic referer
+        if domain in self._last_referer:
+            headers["Referer"] = self._last_referer[domain]
+        else:
+            # First visit - use Google as referer (organic traffic simulation)
+            headers["Referer"] = "https://www.google.com/"
+
+        # Add origin for same-origin requests
+        headers["Origin"] = self._get_base_url(url)
+
+        return headers
+
     async def _wait_for_rate_limit(self, domain: str) -> None:
-        """Wait to respect rate limit for domain."""
+        """Wait to respect rate limit for domain with human-like jitter."""
         stats = self._get_stats(domain)
 
         if self.rate_limit_rpm <= 0:
@@ -106,9 +224,11 @@ class PoliteHttpClient:
 
         if elapsed < min_interval:
             wait_time = min_interval - elapsed
-            # Add jitter (0.5x to 1.5x)
-            jitter = random.uniform(0.5, 1.5)
+            # Add human-like jitter (0.8x to 2.0x) - more variance
+            jitter = random.uniform(0.8, 2.0)
             wait_time *= jitter
+            # Add small random delay to simulate human behavior
+            wait_time += random.uniform(0.3, 1.5)
             await asyncio.sleep(wait_time)
 
         stats.last_request_time = time.time()
@@ -126,22 +246,23 @@ class PoliteHttpClient:
         stats = self._get_stats(domain)
         stats.blocked_until = datetime.utcnow() + timedelta(seconds=duration_seconds)
         stats.consecutive_403s += 1
+        stats.error_count += 1
+
+        # Rotate User-Agent after block
+        stats.last_user_agent = self._get_random_user_agent()
 
     def _mark_success(self, domain: str) -> None:
         """Mark successful request."""
         stats = self._get_stats(domain)
         stats.consecutive_403s = 0
         stats.blocked_until = None
+        stats.success_count += 1
 
-    def _get_headers(self, url: str) -> Dict[str, str]:
-        """Get headers for request."""
-        domain = self._get_domain(url)
-        headers = {
-            "User-Agent": self.USER_AGENT,
-            **self.BROWSER_LIKE_HEADERS,
-            "Referer": f"https://{domain}/",
-        }
-        return headers
+    def _get_proxy_config(self) -> Optional[str]:
+        """Get proxy URL if configured."""
+        if self.proxy and self.proxy.enabled:
+            return self.proxy.url
+        return None
 
     async def get(
         self,
@@ -149,15 +270,17 @@ class PoliteHttpClient:
         headers: Optional[Dict[str, str]] = None,
         follow_redirects: bool = True,
         use_cache: bool = True,
+        is_api: bool = False,
     ) -> Tuple[Optional[str], Optional[int], Optional[str]]:
         """
-        Fetch URL with polite crawling.
+        Fetch URL with stealth crawling.
 
         Args:
             url: URL to fetch
-            headers: Additional headers
+            headers: Additional headers (merged with default)
             follow_redirects: Whether to follow redirects
             use_cache: Whether to use response cache
+            is_api: Whether this is an API request (uses different headers)
 
         Returns:
             Tuple of (html_content, status_code, error_message)
@@ -170,29 +293,57 @@ class PoliteHttpClient:
             logger.debug("cache_hit", url=url)
             return self._cache[url], 200, None
 
-        # Check if domain is blocked
+        # Check if domain is blocked (with reduced block time on retry)
         if self._is_blocked(domain):
-            return None, 403, f"Domain {domain} is temporarily blocked"
+            stats = self._get_stats(domain)
+            # Allow retry sooner if we have a proxy
+            if self.proxy and self.proxy.enabled:
+                stats.blocked_until = None  # Clear block if using proxy
+            else:
+                return None, 403, f"Domain {domain} is temporarily blocked"
 
-        # Rate limiting
+        # Rate limiting with human-like delays
         await self._wait_for_rate_limit(domain)
 
-        # Merge headers
-        request_headers = self._get_headers(url)
+        # Build headers
+        request_headers = self._get_headers(url, is_api=is_api)
         if headers:
             request_headers.update(headers)
+
+        # Get cookies for domain
+        cookies = self._get_cookies(domain)
+
+        # Get proxy
+        proxy_url = self._get_proxy_config()
 
         start_time = time.time()
 
         async with self._semaphore:
             for attempt in range(self.max_retries):
                 try:
-                    async with httpx.AsyncClient(
-                        timeout=self.timeout,
-                        follow_redirects=follow_redirects,
-                    ) as client:
+                    # Create client with proxy if configured
+                    client_kwargs = {
+                        "timeout": self.timeout,
+                        "follow_redirects": follow_redirects,
+                        "cookies": cookies,
+                        "verify": False,  # Skip SSL for some sites
+                    }
+
+                    if proxy_url:
+                        client_kwargs["proxies"] = proxy_url
+
+                    async with httpx.AsyncClient(**client_kwargs) as client:
+                        # Add small random delay before request (human-like)
+                        await asyncio.sleep(random.uniform(0.1, 0.4))
+
                         response = await client.get(url, headers=request_headers)
                         latency_ms = (time.time() - start_time) * 1000
+
+                        # Store cookies from response
+                        cookies.update(response.cookies)
+
+                        # Update referer for next request
+                        self._last_referer[domain] = url
 
                         # Handle specific status codes
                         if response.status_code == 200:
@@ -207,7 +358,31 @@ class PoliteHttpClient:
                             return html, 200, None
 
                         elif response.status_code == 403:
-                            self._mark_blocked(domain, 300)  # Block for 5 minutes
+                            # Try with completely different headers on retry
+                            stats = self._get_stats(domain)
+                            stats.last_user_agent = self._get_random_user_agent()
+                            
+                            # Clear cookies and rebuild headers for fresh session
+                            self._cookies[domain] = httpx.Cookies()
+                            request_headers = self._get_headers(url, is_api=is_api)
+                            if headers:
+                                request_headers.update(headers)
+
+                            if attempt < self.max_retries - 1:
+                                # Longer exponential backoff with more jitter for 403
+                                backoff = (2 ** attempt) * random.uniform(3.0, 6.0) + random.uniform(1.0, 3.0)
+                                logger.warning(
+                                    "403_retry",
+                                    url=url,
+                                    attempt=attempt + 1,
+                                    max_retries=self.max_retries,
+                                    backoff=round(backoff, 1),
+                                    new_ua=stats.last_user_agent[:50],
+                                )
+                                await asyncio.sleep(backoff)
+                                continue
+
+                            self._mark_blocked(domain, 60)  # Short block, allow retry soon
                             crawl_logger.crawl_blocked(url, 403)
                             return None, 403, "Access forbidden - site blocks automated access"
 
@@ -224,7 +399,7 @@ class PoliteHttpClient:
                         elif response.status_code >= 500:
                             # Server error - retry with backoff
                             if attempt < self.max_retries - 1:
-                                backoff = (2 ** attempt) * random.uniform(0.5, 1.5)
+                                backoff = (2 ** attempt) * random.uniform(1.0, 2.0)
                                 await asyncio.sleep(backoff)
                                 continue
                             return None, response.status_code, f"Server error: {response.status_code}"
@@ -234,7 +409,7 @@ class PoliteHttpClient:
 
                 except httpx.TimeoutException:
                     if attempt < self.max_retries - 1:
-                        backoff = (2 ** attempt) * random.uniform(0.5, 1.5)
+                        backoff = (2 ** attempt) * random.uniform(1.0, 2.0)
                         await asyncio.sleep(backoff)
                         continue
                     crawl_logger.crawl_error(url, "timeout", "Request timed out")
@@ -242,11 +417,20 @@ class PoliteHttpClient:
 
                 except httpx.ConnectError as e:
                     if attempt < self.max_retries - 1:
-                        backoff = (2 ** attempt) * random.uniform(0.5, 1.5)
+                        backoff = (2 ** attempt) * random.uniform(1.0, 2.0)
                         await asyncio.sleep(backoff)
                         continue
                     crawl_logger.crawl_error(url, "network_error", str(e))
                     return None, None, f"Connection error: {e}"
+
+                except httpx.ProxyError as e:
+                    logger.error("proxy_error", url=url, error=str(e))
+                    # Disable proxy and retry without it
+                    if self.proxy:
+                        self.proxy.enabled = False
+                    if attempt < self.max_retries - 1:
+                        continue
+                    return None, None, f"Proxy error: {e}"
 
                 except Exception as e:
                     crawl_logger.crawl_error(url, "unknown", str(e))
@@ -256,9 +440,9 @@ class PoliteHttpClient:
 
     async def get_many(
         self,
-        urls: list[str],
-        max_concurrent: int = 5,
-    ) -> list[Tuple[str, Optional[str], Optional[int], Optional[str]]]:
+        urls: List[str],
+        max_concurrent: int = 3,
+    ) -> List[Tuple[str, Optional[str], Optional[int], Optional[str]]]:
         """
         Fetch multiple URLs concurrently with rate limiting.
 
@@ -291,19 +475,43 @@ class PoliteHttpClient:
         return {
             domain: {
                 "request_count": stats.request_count,
+                "success_count": stats.success_count,
                 "error_count": stats.error_count,
                 "consecutive_403s": stats.consecutive_403s,
                 "blocked": self._is_blocked(domain),
                 "blocked_until": stats.blocked_until.isoformat() if stats.blocked_until else None,
+                "last_user_agent": stats.last_user_agent[:50] + "..." if len(stats.last_user_agent) > 50 else stats.last_user_agent,
             }
             for domain, stats in self._domain_stats.items()
         }
 
     def clear_blocks(self) -> None:
-        """Clear all domain blocks (for testing)."""
+        """Clear all domain blocks."""
         for stats in self._domain_stats.values():
             stats.blocked_until = None
             stats.consecutive_403s = 0
+
+    def clear_cookies(self, domain: Optional[str] = None) -> None:
+        """Clear cookies for domain or all domains."""
+        if domain:
+            if domain in self._cookies:
+                self._cookies[domain] = httpx.Cookies()
+        else:
+            self._cookies.clear()
+
+    def set_proxy(self, proxy_url: str) -> None:
+        """Set proxy URL."""
+        self.proxy = ProxyConfig(url=proxy_url, enabled=True)
+        logger.info("proxy_configured", proxy=proxy_url[:30] + "...")
+
+    def disable_proxy(self) -> None:
+        """Disable proxy."""
+        if self.proxy:
+            self.proxy.enabled = False
+
+
+# Alias for backward compatibility
+StealthHttpClient = PoliteHttpClient
 
 
 # Global client instance
@@ -316,3 +524,9 @@ def get_http_client() -> PoliteHttpClient:
     if _http_client is None:
         _http_client = PoliteHttpClient()
     return _http_client
+
+
+def configure_proxy(proxy_url: str) -> None:
+    """Configure proxy for global HTTP client."""
+    client = get_http_client()
+    client.set_proxy(proxy_url)
