@@ -17,7 +17,7 @@ import os
 from typing import Optional, Dict, Any, Tuple, List
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import httpx
 from cachetools import TTLCache
@@ -179,6 +179,37 @@ class PoliteHttpClient:
             self._cookies[domain] = httpx.Cookies()
         return self._cookies[domain]
 
+    def _encode_url(self, url: str) -> str:
+        """
+        Properly encode URL to handle Vietnamese characters.
+        Keeps scheme, netloc, and path structure intact.
+        """
+        from urllib.parse import urlsplit, urlunsplit, quote
+
+        try:
+            # Split URL into components
+            parts = urlsplit(url)
+
+            # Encode path (handles Vietnamese chars)
+            # safe='/:?=&' keeps URL structure intact
+            encoded_path = quote(parts.path, safe='/:')
+            encoded_query = quote(parts.query, safe='=&')
+
+            # Reconstruct URL with encoded parts
+            encoded_url = urlunsplit((
+                parts.scheme,
+                parts.netloc,
+                encoded_path,
+                encoded_query,
+                parts.fragment
+            ))
+
+            return encoded_url
+
+        except Exception as e:
+            logger.warning("url_encode_failed", url=url[:100], error=str(e))
+            return url  # Return original if encoding fails
+
     def _get_random_user_agent(self) -> str:
         """Get a random User-Agent."""
         return random.choice(USER_AGENTS)
@@ -285,13 +316,16 @@ class PoliteHttpClient:
         Returns:
             Tuple of (html_content, status_code, error_message)
         """
-        domain = self._get_domain(url)
+        # Encode URL to handle Vietnamese characters
+        encoded_url = self._encode_url(url)
+
+        domain = self._get_domain(encoded_url)
         crawl_logger = CrawlLogger(domain)
 
         # Check cache first
-        if use_cache and self.enable_cache and url in self._cache:
-            logger.debug("cache_hit", url=url)
-            return self._cache[url], 200, None
+        if use_cache and self.enable_cache and encoded_url in self._cache:
+            logger.debug("cache_hit", url=encoded_url)
+            return self._cache[encoded_url], 200, None
 
         # Check if domain is blocked (with reduced block time on retry)
         if self._is_blocked(domain):
@@ -306,7 +340,7 @@ class PoliteHttpClient:
         await self._wait_for_rate_limit(domain)
 
         # Build headers
-        request_headers = self._get_headers(url, is_api=is_api)
+        request_headers = self._get_headers(encoded_url, is_api=is_api)
         if headers:
             request_headers.update(headers)
 
@@ -336,14 +370,14 @@ class PoliteHttpClient:
                         # Add small random delay before request (human-like)
                         await asyncio.sleep(random.uniform(0.1, 0.4))
 
-                        response = await client.get(url, headers=request_headers)
+                        response = await client.get(encoded_url, headers=request_headers)
                         latency_ms = (time.time() - start_time) * 1000
 
                         # Store cookies from response
                         cookies.update(response.cookies)
 
                         # Update referer for next request
-                        self._last_referer[domain] = url
+                        self._last_referer[domain] = encoded_url
 
                         # Handle specific status codes
                         if response.status_code == 200:
@@ -352,9 +386,9 @@ class PoliteHttpClient:
 
                             # Cache successful response
                             if use_cache and self.enable_cache:
-                                self._cache[url] = html
+                                self._cache[encoded_url] = html
 
-                            crawl_logger.crawl_success(url, 1, latency_ms)
+                            crawl_logger.crawl_success(encoded_url, 1, latency_ms)
                             return html, 200, None
 
                         elif response.status_code == 403:
@@ -364,7 +398,7 @@ class PoliteHttpClient:
 
                             # Clear cookies and rebuild headers for fresh session
                             self._cookies[domain] = httpx.Cookies()
-                            request_headers = self._get_headers(url, is_api=is_api)
+                            request_headers = self._get_headers(encoded_url, is_api=is_api)
                             if headers:
                                 request_headers.update(headers)
 
@@ -373,7 +407,7 @@ class PoliteHttpClient:
                                 backoff = (2 ** attempt) * random.uniform(3.0, 6.0) + random.uniform(1.0, 3.0)
                                 logger.warning(
                                     "403_retry",
-                                    url=url,
+                                    url=encoded_url,
                                     attempt=attempt + 1,
                                     max_retries=self.max_retries,
                                     backoff=round(backoff, 1),
@@ -383,14 +417,14 @@ class PoliteHttpClient:
                                 continue
 
                             self._mark_blocked(domain, 60)  # Short block, allow retry soon
-                            crawl_logger.crawl_blocked(url, 403)
+                            crawl_logger.crawl_blocked(encoded_url, 403)
                             return None, 403, "Access forbidden - site blocks automated access"
 
                         elif response.status_code == 429:
                             # Rate limited - get Retry-After if available
                             retry_after = int(response.headers.get("Retry-After", 60))
                             self._mark_blocked(domain, retry_after)
-                            crawl_logger.rate_limited(url, retry_after)
+                            crawl_logger.rate_limited(encoded_url, retry_after)
                             return None, 429, f"Rate limited - retry after {retry_after}s"
 
                         elif response.status_code == 404:
@@ -412,7 +446,7 @@ class PoliteHttpClient:
                         backoff = (2 ** attempt) * random.uniform(1.0, 2.0)
                         await asyncio.sleep(backoff)
                         continue
-                    crawl_logger.crawl_error(url, "timeout", "Request timed out")
+                    crawl_logger.crawl_error(encoded_url, "timeout", "Request timed out")
                     return None, None, "Request timed out"
 
                 except httpx.ConnectError as e:
@@ -420,11 +454,11 @@ class PoliteHttpClient:
                         backoff = (2 ** attempt) * random.uniform(1.0, 2.0)
                         await asyncio.sleep(backoff)
                         continue
-                    crawl_logger.crawl_error(url, "network_error", str(e))
+                    crawl_logger.crawl_error(encoded_url, "network_error", str(e))
                     return None, None, f"Connection error: {e}"
 
                 except httpx.ProxyError as e:
-                    logger.error("proxy_error", url=url, error=str(e))
+                    logger.error("proxy_error", url=encoded_url, error=str(e))
                     # Disable proxy and retry without it
                     if self.proxy:
                         self.proxy.enabled = False
@@ -433,7 +467,7 @@ class PoliteHttpClient:
                     return None, None, f"Proxy error: {e}"
 
                 except Exception as e:
-                    crawl_logger.crawl_error(url, "unknown", str(e))
+                    crawl_logger.crawl_error(encoded_url, "unknown", str(e))
                     return None, None, f"Unexpected error: {e}"
 
         return None, None, "Max retries exceeded"
