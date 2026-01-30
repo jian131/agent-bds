@@ -131,8 +131,17 @@ function ContactReveal({ contact, listingId }: { contact: Contact; listingId: st
     setTimeout(() => setCopied(null), 2000);
   };
 
+  // Handle undefined/null contact
+  if (!contact) {
+    return (
+      <div className="text-sm text-slate-500">
+        Không có thông tin liên hệ
+      </div>
+    );
+  }
+
   if (!revealed) {
-    const hasContact = contact.phones?.length > 0 || contact.zalo?.length > 0 || contact.facebook?.length > 0;
+    const hasContact = (contact.phones?.length ?? 0) > 0 || (contact.zalo?.length ?? 0) > 0 || (contact.facebook?.length ?? 0) > 0;
 
     return (
       <button

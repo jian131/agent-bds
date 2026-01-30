@@ -550,63 +550,45 @@ class RealEstateSearchService:
 
                     passes_price = min_check <= price_val <= max_check
 
-            # === LOCATION FILTER (disabled for testing) ===
-            # Data from chotot API may not have city field properly
-            # Just pass all listings for now
-            passes_location = True
-            """
+            # === LOCATION FILTER (enabled) ===
             if district or city:
-                # Handle both formats:
-                # 1. orchestrator: city, district at top level
-                # 2. old parser: nested location dict
-                location = listing.get('location', {})
-
-                if isinstance(location, dict):
-                    location_str = ' '.join([
-                        str(location.get('address', '')),
-                        str(location.get('ward', '')),
-                        str(location.get('district', '')),
-                        str(location.get('city', ''))
-                    ]).lower()
-                else:
-                    location_str = str(location).lower()
-
-                # Also check top-level fields (from orchestrator)
-                top_city = listing.get('city', '')
-                top_district = listing.get('district', '')
-                top_address = listing.get('address', '')
-
-                title = listing.get('title', '').lower()
-                full_text = f"{location_str} {title} {top_city} {top_district} {top_address}".lower()
+                # Get location fields from listing
+                top_city = str(listing.get('city', '')).lower()
+                top_district = str(listing.get('district', '')).lower()
+                top_address = str(listing.get('address', '')).lower()
+                title = str(listing.get('title', '')).lower()
+                
+                full_text = f"{top_city} {top_district} {top_address} {title}"
 
                 # City check (required)
-                city_lower = city.lower()
-                city_variants = [city_lower, city_lower.replace(' ', '')]
-                if 'hà nội' in city_lower:
-                    city_variants.extend(['ha noi', 'hanoi', 'hà nội'])
-                elif 'hồ chí minh' in city_lower:
-                    city_variants.extend(['hcm', 'saigon', 'sài gòn', 'ho chi minh'])
+                if city:
+                    city_lower = city.lower()
+                    city_variants = [city_lower, city_lower.replace(' ', '')]
+                    if 'hà nội' in city_lower:
+                        city_variants.extend(['ha noi', 'hanoi', 'hà nội'])
+                    elif 'hồ chí minh' in city_lower:
+                        city_variants.extend(['hcm', 'saigon', 'sài gòn', 'ho chi minh'])
 
-                city_match = any(v in full_text for v in city_variants)
-                if not city_match:
-                    passes_location = False
+                    city_match = any(v in full_text for v in city_variants)
+                    if not city_match:
+                        passes_location = False
 
-                # District check (optional, stricter)
+                # District check (if specified)
                 if district and passes_location:
                     district_lower = district.lower()
                     district_variants = [
                         district_lower,
-                        district_lower.replace(' ', '')
+                        district_lower.replace(' ', ''),
+                        f"quận {district_lower}",
+                        f"quan {district_lower}",
                     ]
+                    # Add common variants for Cầu Giấy
                     if 'cầu giấy' in district_lower or 'cau giay' in district_lower:
-                        district_variants.extend(['cầu giấy', 'cau giay', 'caugiay'])
-
+                        district_variants.extend(['cầu giấy', 'cau giay', 'caugiay', 'cầugiấy'])
+                    
                     district_match = any(v in full_text for v in district_variants)
-                    # District is optional - don't strictly filter
                     if not district_match:
-                        # Still allow, but we could rank lower
-                        pass
-            """ # End of disabled location filter
+                        passes_location = False
 
             if passes_price and passes_location:
                 filtered.append(listing)
