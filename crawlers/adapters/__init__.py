@@ -14,6 +14,8 @@ from crawlers.adapters.base import (
     UnifiedListing,
     CrawlError,
     CrawlErrorType,
+    BlockedError,
+    RateLimitError,
 )
 
 # Import all platform adapters to trigger registration
@@ -40,6 +42,8 @@ __all__ = [
     "UnifiedListing",
     "CrawlError",
     "CrawlErrorType",
+    "BlockedError",
+    "RateLimitError",
     # Platform adapters
     "BatDongSanAdapter",
     "ChototAdapter",

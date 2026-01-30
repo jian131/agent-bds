@@ -19,6 +19,8 @@ from crawlers.adapters import (
     UnifiedListing,
     CrawlError,
     CrawlErrorType,
+    BlockedError,
+    RateLimitError,
 )
 from crawlers.http_client import PoliteHttpClient
 from core.logging import CrawlLogger, get_logger
@@ -294,23 +296,41 @@ class SearchOrchestrator:
                 )
 
                 # Fetch with timeout
-                response = await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self.http_client.get(url),
                     timeout=self.timeout_seconds,
                 )
+
+                # Unpack result tuple (html, status_code, error)
+                html, status_code, error = result
+
+                # Check for errors
+                if error or not html:
+                    if status_code == 403:
+                        raise BlockedError(message=error or "Access forbidden", url=url, platform=platform_id, status_code=403)
+                    elif status_code == 429:
+                        raise RateLimitError(message=error or "Rate limited", url=url, platform=platform_id, status_code=429)
+                    else:
+                        raise CrawlError(
+                            error_type=CrawlErrorType.NETWORK_ERROR,
+                            message=error or f"HTTP {status_code}",
+                            url=url,
+                            platform=platform_id,
+                            status_code=status_code
+                        )
 
                 # Check for API support (Chotot, Nhatot)
                 if hasattr(adapter, 'parse_api_response') and adapter.capabilities.supports_api:
                     try:
                         # Try JSON first
                         import json
-                        data = json.loads(response.text)
+                        data = json.loads(html)
                         listings = adapter.parse_api_response(data)
                     except (json.JSONDecodeError, ValueError):
                         # Fall back to HTML parsing
-                        listings = adapter.parse_search_results(response.text)
+                        listings = adapter.parse_search_results(html)
                 else:
-                    listings = adapter.parse_search_results(response.text)
+                    listings = adapter.parse_search_results(html)
 
                 duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
