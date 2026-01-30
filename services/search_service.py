@@ -543,6 +543,9 @@ class RealEstateSearchService:
 
             # === LOCATION FILTER ===
             if district or city:
+                # Handle both formats: 
+                # 1. orchestrator: city, district at top level
+                # 2. old parser: nested location dict
                 location = listing.get('location', {})
 
                 if isinstance(location, dict):
@@ -555,8 +558,13 @@ class RealEstateSearchService:
                 else:
                     location_str = str(location).lower()
 
+                # Also check top-level fields (from orchestrator)
+                top_city = listing.get('city', '')
+                top_district = listing.get('district', '')
+                top_address = listing.get('address', '')
+
                 title = listing.get('title', '').lower()
-                full_text = f"{location_str} {title}"
+                full_text = f"{location_str} {title} {top_city} {top_district} {top_address}".lower()
 
                 # City check (required)
                 city_lower = city.lower()
@@ -597,18 +605,27 @@ class RealEstateSearchService:
             # At minimum, filter by city
             for listing in listings:
                 location = listing.get('location', {})
+                # Also check top-level city (from orchestrator)
+                top_city = str(listing.get('city', '')).lower()
+                top_address = str(listing.get('address', '')).lower()
+
                 if isinstance(location, dict):
                     location_str = str(location.get('city', '')) + ' ' + str(location.get('address', ''))
                 else:
                     location_str = str(location)
+                location_str = location_str.lower()
+
+                full_text = f"{location_str} {top_city} {top_address}"
 
                 city_lower = city.lower()
-                if city_lower.replace(' ', '') in location_str.lower().replace(' ', ''):
+                if city_lower.replace(' ', '') in full_text.replace(' ', ''):
                     filtered.append(listing)
-                elif 'ha noi' in city_lower and 'hà nội' in location_str.lower():
-                    filtered.append(listing)
-                elif 'hcm' in location_str.lower() and 'hồ chí minh' in city_lower:
-                    filtered.append(listing)
+                elif 'hà nội' in city_lower or 'ha noi' in city_lower:
+                    if any(x in full_text for x in ['hà nội', 'ha noi', 'hanoi']):
+                        filtered.append(listing)
+                elif 'hồ chí minh' in city_lower:
+                    if any(x in full_text for x in ['hcm', 'sài gòn', 'ho chi minh']):
+                        filtered.append(listing)
 
             if filtered:
                 return filtered[:10]
