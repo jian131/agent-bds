@@ -6,6 +6,7 @@ Orchestrates: Direct platform crawling → Parsing → Storage
 import asyncio
 from typing import List, Dict, AsyncGenerator, Optional
 from crawlers.httpx_crawler import HttpxCrawler
+from crawlers.orchestrator import search_all_platforms
 from parsers.listing_parser import ListingParser
 from storage.database import ListingCRUD, get_session
 from storage.vector_db import get_vector_db
@@ -32,69 +33,59 @@ class RealEstateSearchService:
 
     async def search_stream(self, user_query: str, max_results: int = 50) -> AsyncGenerator[Dict, None]:
         """
-        Streaming search - yields progress updates and results
+        Streaming search using orchestrator with real platform adapters
 
         Yields:
             Dict with: type (status/result/complete), data
         """
-
         start_time = time.time()
 
-        yield {'type': 'status', 'message': 'Đang tìm kiếm...'}
+        yield {'type': 'status', 'message': 'Đang phân tích truy vấn...'}
 
-        # Step 1: Generate platform URLs from query
-        urls_data = self._generate_fallback_urls(user_query)
-
-        if not urls_data:
-            yield {'type': 'complete', 'total': 0, 'time': time.time() - start_time}
-            return
-
-        yield {'type': 'status', 'message': f'Tìm thấy {len(urls_data)} nền tảng BĐS'}
-
-        # Step 2: Crawl platforms using httpx
-        all_raw_listings = []
-
-        platforms_crawled = set()
-        for data in urls_data:
-            platform = data.get('platform', 'unknown')
-            if platform not in platforms_crawled:
-                yield {'type': 'status', 'message': f'Đang crawl {platform}...'}
-                platforms_crawled.add(platform)
-
-        # Crawl all URLs
-        urls = [data['url'] for data in urls_data]
-        all_raw_listings = await self.httpx_crawler.crawl_multiple(urls, max_concurrent=5)
-
-        # If no results from crawling (sites block bots), use demo data
-        if not all_raw_listings:
-            yield {'type': 'status', 'message': '⚠️ Các trang BĐS chặn bot - hiển thị demo data'}
-            all_raw_listings = self._generate_demo_listings(user_query)
-
-        yield {'type': 'status', 'message': f'Thu thập được {len(all_raw_listings)} tin đăng'}
-
-        # Step 3: Parse
-        yield {'type': 'status', 'message': 'Đang xử lý kết quả...'}
-
-        validated_listings = await self.parser.parse_and_validate_batch(all_raw_listings)
-        unique_listings = self._deduplicate(validated_listings)
-
-        # Step 3.5: Filter by price from query
+        # Parse query to extract search params
         parsed_query = self._parse_query(user_query)
-        filtered_listings = self._filter_by_criteria(unique_listings, parsed_query)
 
-        yield {'type': 'status', 'message': f'Lọc được {len(filtered_listings)} tin phù hợp'}
+        # Use orchestrator to search all platforms
+        yield {'type': 'status', 'message': 'Đang tìm kiếm trên 11 nền tảng BĐS...'}
 
-        # Yield results one by one for progressive loading
-        for listing in filtered_listings[:max_results]:
-            yield {'type': 'result', 'data': self._serialize_listing(listing)}
+        try:
+            # Search all platforms using orchestrator
+            result = await search_all_platforms(
+                query=user_query,
+                city=parsed_query.get('city', 'Hà Nội'),
+                district=parsed_query.get('district'),
+                min_price=parsed_query.get('price_min'),
+                max_price=parsed_query.get('price_max'),
+                page=1,
+                limit=max_results
+            )
 
-        elapsed = time.time() - start_time
-        yield {
-            'type': 'complete',
-            'total': len(filtered_listings),
-            'time': elapsed,
-            'platforms': list(platforms_crawled)
-        }
+            total_found = result.total_found
+            listings = result.listings
+            platforms = result.platforms_searched
+
+            yield {'type': 'status', 'message': f'✅ Tìm thấy {total_found} tin đăng từ {platforms} nền tảng'}
+
+            # Filter by criteria from parsed query
+            filtered_listings = self._filter_by_criteria(listings, parsed_query)
+
+            yield {'type': 'status', 'message': f'Lọc được {len(filtered_listings)} tin phù hợp'}
+
+            # Yield results one by one for progressive loading
+            for listing in filtered_listings[:max_results]:
+                yield {'type': 'result', 'data': self._serialize_listing(listing)}
+
+            elapsed = time.time() - start_time
+            yield {
+                'type': 'complete',
+                'total': len(filtered_listings),
+                'time': elapsed,
+                'platforms': platforms
+            }
+
+        except Exception as e:
+            yield {'type': 'error', 'message': f'Lỗi khi tìm kiếm: {str(e)}'}
+            yield {'type': 'complete', 'total': 0, 'time': time.time() - start_time}
 
     def _serialize_listing(self, listing: Dict) -> Dict:
         """Serialize listing for JSON response"""
