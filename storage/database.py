@@ -5,7 +5,7 @@ Defines all database tables and provides async database operations.
 
 import enum
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import (
@@ -68,8 +68,10 @@ async_session_factory = async_sessionmaker(
 )
 
 
+from typing import AsyncGenerator
+
 @asynccontextmanager
-async def get_session() -> AsyncSession:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
     async with async_session_factory() as session:
         try:

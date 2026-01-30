@@ -382,6 +382,8 @@ function FilterBar({
                   value={district}
                   onChange={(e) => setDistrict(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                  title="Chọn quận/huyện"
+                  aria-label="Chọn quận/huyện"
                 >
                   <option value="">Tất cả</option>
                   {districts.map(d => (
@@ -396,6 +398,8 @@ function FilterBar({
                   value={priceRange}
                   onChange={(e) => setPriceRange(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                  title="Chọn khoảng giá"
+                  aria-label="Chọn khoảng giá"
                 >
                   <option value="">Tất cả</option>
                   <option value="0-1">Dưới 1 tỷ</option>
@@ -413,6 +417,8 @@ function FilterBar({
                   value={areaRange}
                   onChange={(e) => setAreaRange(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg"
+                  title="Chọn diện tích"
+                  aria-label="Chọn diện tích"
                 >
                   <option value="">Tất cả</option>
                   <option value="0-50">Dưới 50m²</option>

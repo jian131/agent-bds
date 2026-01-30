@@ -11,6 +11,7 @@ from loguru import logger
 
 from config import settings
 from services.search_service import RealEstateSearchService
+from api.routes.search import quick_search
 
 
 def setup_logging():

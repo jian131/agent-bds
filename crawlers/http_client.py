@@ -361,7 +361,7 @@ class PoliteHttpClient:
                             # Try with completely different headers on retry
                             stats = self._get_stats(domain)
                             stats.last_user_agent = self._get_random_user_agent()
-                            
+
                             # Clear cookies and rebuild headers for fresh session
                             self._cookies[domain] = httpx.Cookies()
                             request_headers = self._get_headers(url, is_api=is_api)

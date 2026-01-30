@@ -118,7 +118,7 @@ export function ListingCard({ listing, variant = "default" }: ListingCardProps) 
         )}
         {listing.source_url && (
           <Button variant="outline" size="sm" asChild>
-            <a href={listing.source_url} target="_blank" rel="noopener noreferrer">
+            <a href={listing.source_url} target="_blank" rel="noopener noreferrer" title="Xem nguồn">
               <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
