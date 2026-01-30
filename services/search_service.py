@@ -56,8 +56,7 @@ class RealEstateSearchService:
                 district=parsed_query.get('district'),
                 min_price=parsed_query.get('price_min'),
                 max_price=parsed_query.get('price_max'),
-                page=1,
-                limit=max_results
+                page=1
             )
 
             total_found = result.total_listings
@@ -116,18 +115,71 @@ class RealEstateSearchService:
 
     async def search(self, user_query: str, max_results: int = 50) -> List[Dict]:
         """
-        Main search method (non-streaming)
+        Main search method (non-streaming) - Uses orchestrator for real data
 
         Flow:
-        1. Google search → URLs
-        2. Crawl URLs using httpx → Raw data
-        3. Parse & validate → Clean listings
-        4. Save to DB → Return
+        1. Parse query
+        2. Search all platforms using orchestrator
+        3. Filter & validate → Clean listings
+        4. Return
         """
 
         print(f"\n{'='*60}")
-        print(f"SEARCH: {user_query}")
+        print(f"SEARCH (ORCHESTRATOR): {user_query}")
         print(f"{'='*60}")
+
+        start_time = time.time()
+
+        # Parse query to extract search params
+        parsed_query = self._parse_query(user_query)
+
+        try:
+            # Search all platforms using orchestrator
+            result = await search_all_platforms(
+                query=user_query,
+                city=parsed_query.get('city', 'Hà Nội'),
+                district=parsed_query.get('district'),
+                min_price=parsed_query.get('price_min'),
+                max_price=parsed_query.get('price_max'),
+                page=1
+            )
+
+            total_found = result.total_listings
+            listings = result.listings
+            platforms = result.platforms_searched
+
+            print(f"✅ Orchestrator found {total_found} listings from {platforms} platforms")
+
+            # Convert UnifiedListing objects to dicts
+            listings_dicts = []
+            for listing in listings:
+                if hasattr(listing, 'to_dict'):
+                    listings_dicts.append(listing.to_dict())
+                elif hasattr(listing, '__dict__'):
+                    listings_dicts.append(vars(listing))
+                else:
+                    listings_dicts.append(listing)
+
+            # Filter by criteria from parsed query
+            filtered_listings = self._filter_by_criteria(listings_dicts, parsed_query)
+
+            print(f"Filtered to {len(filtered_listings)} matching listings")
+            print(f"Search completed in {time.time() - start_time:.2f}s")
+
+            return filtered_listings[:max_results]
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"❌ Orchestrator error: {e}")
+            # Fallback to old method if orchestrator fails
+            return await self._search_with_httpx(user_query, max_results)
+
+    async def _search_with_httpx(self, user_query: str, max_results: int = 50) -> List[Dict]:
+        """
+        Fallback search method using httpx crawler (for when orchestrator fails)
+        """
+        print(f"Using httpx fallback for: {user_query}")
 
         start_time = time.time()
 
