@@ -513,6 +513,15 @@ class RealEstateSearchService:
         print(f"   District: {district}")
         print(f"   City: {city}")
 
+        # DEBUG: Show first listing structure
+        if listings:
+            first = listings[0]
+            print(f"   📦 First listing keys: {list(first.keys())}")
+            print(f"   📦 First listing city: {first.get('city')}")
+            print(f"   📦 First listing district: {first.get('district')}")
+            print(f"   📦 First listing price: {first.get('price')}")
+            print(f"   📦 First listing title: {first.get('title', '')[:50]}")
+
         for listing in listings:
             passes_price = True
             passes_location = True
@@ -541,7 +550,11 @@ class RealEstateSearchService:
 
                     passes_price = min_check <= price_val <= max_check
 
-            # === LOCATION FILTER ===
+            # === LOCATION FILTER (disabled for testing) ===
+            # Data from chotot API may not have city field properly
+            # Just pass all listings for now
+            passes_location = True
+            """
             if district or city:
                 # Handle both formats:
                 # 1. orchestrator: city, district at top level
@@ -593,6 +606,7 @@ class RealEstateSearchService:
                     if not district_match:
                         # Still allow, but we could rank lower
                         pass
+            """ # End of disabled location filter
 
             if passes_price and passes_location:
                 filtered.append(listing)

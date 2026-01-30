@@ -42,10 +42,22 @@ class NhatotAdapter(BasePlatformAdapter):
     )
 
     REGION_CODES = {
+        # Hà Nội
         "hanoi": 12000,
+        "hà nội": 12000,
+        "ha noi": 12000,
+        # HCM
         "hcm": 13000,
         "hochiminh": 13000,
+        "hồ chí minh": 13000,
+        "ho chi minh": 13000,
+        "thành phố hồ chí minh": 13000,
+        "tp hồ chí minh": 13000,
+        "tp hcm": 13000,
+        # Đà Nẵng
         "danang": 43000,
+        "đà nẵng": 43000,
+        "da nang": 43000,
     }
 
     def __init__(self) -> None:
@@ -70,8 +82,11 @@ class NhatotAdapter(BasePlatformAdapter):
         ]
 
         if city:
-            city_lower = city.lower().replace(" ", "")
+            city_lower = city.lower().strip()
             region = self.REGION_CODES.get(city_lower)
+            if not region:
+                city_no_space = city_lower.replace(" ", "")
+                region = self.REGION_CODES.get(city_no_space)
             if region:
                 params.append(f"region_v2={region}")
 

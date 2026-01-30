@@ -40,15 +40,36 @@ class ChototAdapter(BasePlatformAdapter):
         rate_limit_requests_per_minute=15,
     )
 
-    # Chotot region codes
+    # Chotot region codes - support multiple name formats
     REGION_CODES = {
+        # Hà Nội
         "hanoi": 12000,
+        "hà nội": 12000,
+        "ha noi": 12000,
+        # HCM
         "hcm": 13000,
         "hochiminh": 13000,
+        "hồ chí minh": 13000,
+        "ho chi minh": 13000,
+        "thành phố hồ chí minh": 13000,
+        "tp hồ chí minh": 13000,
+        "tp hcm": 13000,
+        # Đà Nẵng
         "danang": 43000,
+        "đà nẵng": 43000,
+        "da nang": 43000,
+        # Hải Phòng
         "haiphong": 31000,
+        "hải phòng": 31000,
+        "hai phong": 31000,
+        # Cần Thơ
         "cantho": 92000,
+        "cần thơ": 92000,
+        "can tho": 92000,
+        # Biên Hòa
         "bienhoa": 75000,
+        "biên hòa": 75000,
+        "bien hoa": 75000,
     }
 
     def __init__(self) -> None:
@@ -77,10 +98,14 @@ class ChototAdapter(BasePlatformAdapter):
             "st=s,k",   # Status: selling
         ]
 
-        # Region
+        # Region - try with and without diacritics
         if city:
-            city_lower = city.lower().replace(" ", "")
+            city_lower = city.lower().strip()
             region_code = self.REGION_CODES.get(city_lower)
+            if not region_code:
+                # Try without spaces
+                city_no_space = city_lower.replace(" ", "")
+                region_code = self.REGION_CODES.get(city_no_space)
             if region_code:
                 params.append(f"region_v2={region_code}")
 
