@@ -55,7 +55,7 @@ async def auto_scrape_job():
     Automated scraping job.
     Runs every N hours to fetch new listings from popular searches.
     """
-    from agents.search_agent import RealEstateSearchAgent
+    from services.search_service import RealEstateSearchService
     from storage.database import get_session, ListingCRUD, ScrapeLogCRUD
     from storage.vector_db import index_listings
     from storage.sheets import backup_listings
@@ -75,105 +75,97 @@ async def auto_scrape_job():
         "chung cư Nam Từ Liêm 2-3 tỷ",
     ]
 
-    agent = RealEstateSearchAgent(headless=True)
+    service = RealEstateSearchService()
     validator = get_validator()
 
     total_found = 0
     total_new = 0
     total_errors = 0
 
-    try:
-        for query in queries:
-            logger.info(f"Auto-scraping: {query}")
+    for query in queries:
+        logger.info(f"Auto-scraping: {query}")
 
+        async with get_session() as session:
+            # Create scrape log
+            scrape_log = await ScrapeLogCRUD.create(session, {
+                "platform": "multi",
+                "query": query,
+            })
+            log_id = scrape_log.id
+
+        try:
+            # Search using Crawl4AI service
+            results = await service.search(query, max_results=20)
+
+            total_found += len(results)
+
+            if results:
+                # Validate
+                valid_listings, _ = validator.validate_listings(results)
+
+                # Save to database
+                new_count = 0
+                async with get_session() as session:
+                    for listing in valid_listings:
+                        _, is_new = await ListingCRUD.upsert(session, {
+                            "id": listing.get("id"),
+                            "title": listing.get("title"),
+                            "description": listing.get("description"),
+                            "price_text": listing.get("price_text"),
+                            "price_number": listing.get("price_number"),
+                            "price_per_m2": listing.get("price_per_m2"),
+                            "property_type": listing.get("property_type"),
+                            "area_m2": listing.get("area_m2"),
+                            "bedrooms": listing.get("bedrooms"),
+                            "bathrooms": listing.get("bathrooms"),
+                            "address": listing.get("location", {}).get("address"),
+                            "ward": listing.get("location", {}).get("ward"),
+                            "district": listing.get("location", {}).get("district"),
+                            "city": listing.get("location", {}).get("city", "Hà Nội"),
+                            "contact_name": listing.get("contact", {}).get("name"),
+                            "contact_phone": listing.get("contact", {}).get("phone"),
+                            "contact_phone_clean": listing.get("contact", {}).get("phone_clean"),
+                            "images": listing.get("images", []),
+                            "source_url": listing.get("source_url"),
+                            "source_platform": listing.get("source_platform"),
+                            "validation_warnings": listing.get("_validation_warnings"),
+                        })
+                        if is_new:
+                            new_count += 1
+
+                total_new += new_count
+
+                # Index to vector DB
+                await index_listings(valid_listings)
+
+                # Backup to Google Sheets (if configured)
+                if settings.google_sheets_credentials_file:
+                    await backup_listings(valid_listings)
+
+            # Update scrape log
             async with get_session() as session:
-                # Create scrape log
-                scrape_log = await ScrapeLogCRUD.create(session, {
-                    "platform": "multi",
-                    "query": query,
-                })
-                log_id = scrape_log.id
-
-            try:
-                # Search
-                result = await agent.search(
-                    query,
-                    max_results=20,
-                    platforms=["chotot", "batdongsan"],
+                await ScrapeLogCRUD.finish(
+                    session,
+                    log_id,
+                    listings_found=len(results),
+                    listings_new=new_count if results else 0,
+                    status="completed",
                 )
 
-                total_found += result.total_found
+        except Exception as e:
+            logger.error(f"Error scraping '{query}': {e}")
+            total_errors += 1
 
-                if result.listings:
-                    # Validate
-                    valid_listings, _ = validator.validate_listings(result.listings)
+            async with get_session() as session:
+                await ScrapeLogCRUD.finish(
+                    session,
+                    log_id,
+                    status="failed",
+                    error_message=str(e),
+                )
 
-                    # Save to database
-                    new_count = 0
-                    async with get_session() as session:
-                        for listing in valid_listings:
-                            _, is_new = await ListingCRUD.upsert(session, {
-                                "id": listing.get("id"),
-                                "title": listing.get("title"),
-                                "description": listing.get("description"),
-                                "price_text": listing.get("price_text"),
-                                "price_number": listing.get("price_number"),
-                                "price_per_m2": listing.get("price_per_m2"),
-                                "property_type": listing.get("property_type"),
-                                "area_m2": listing.get("area_m2"),
-                                "bedrooms": listing.get("bedrooms"),
-                                "bathrooms": listing.get("bathrooms"),
-                                "address": listing.get("location", {}).get("address"),
-                                "ward": listing.get("location", {}).get("ward"),
-                                "district": listing.get("location", {}).get("district"),
-                                "city": listing.get("location", {}).get("city", "Hà Nội"),
-                                "contact_name": listing.get("contact", {}).get("name"),
-                                "contact_phone": listing.get("contact", {}).get("phone"),
-                                "contact_phone_clean": listing.get("contact", {}).get("phone_clean"),
-                                "images": listing.get("images", []),
-                                "source_url": listing.get("source_url"),
-                                "source_platform": listing.get("source_platform"),
-                                "validation_warnings": listing.get("_validation_warnings"),
-                            })
-                            if is_new:
-                                new_count += 1
-
-                    total_new += new_count
-
-                    # Index to vector DB
-                    await index_listings(valid_listings)
-
-                    # Backup to Google Sheets (if configured)
-                    if settings.google_sheets_credentials_file:
-                        await backup_listings(valid_listings)
-
-                # Update scrape log
-                async with get_session() as session:
-                    await ScrapeLogCRUD.finish(
-                        session,
-                        log_id,
-                        listings_found=result.total_found,
-                        listings_new=new_count if result.listings else 0,
-                        status="completed",
-                    )
-
-            except Exception as e:
-                logger.error(f"Error scraping '{query}': {e}")
-                total_errors += 1
-
-                async with get_session() as session:
-                    await ScrapeLogCRUD.finish(
-                        session,
-                        log_id,
-                        status="failed",
-                        error_message=str(e),
-                    )
-
-            # Delay between queries
-            await asyncio.sleep(30)
-
-    finally:
-        await agent.close()
+        # Delay between queries
+        await asyncio.sleep(30)
 
     logger.info(
         f"Auto-scrape completed: found={total_found}, new={total_new}, errors={total_errors}"

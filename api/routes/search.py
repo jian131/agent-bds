@@ -273,40 +273,51 @@ async def websocket_search(websocket: WebSocket):
 
             logger.info(f"WebSocket search: {query}")
 
-            # Progress callback
-            async def send_progress(update: dict):
-                await websocket.send_json({
-                    "type": "progress",
-                    **update,
-                })
-
-            # Perform search with progress
-            agent = RealEstateSearchAgent(headless=True)
+            # Perform search with streaming
+            service = RealEstateSearchService()
 
             try:
-                result = await agent.search_with_progress(
-                    query,
-                    progress_callback=send_progress,
-                    max_results=data.get("max_results", 20),
-                    platforms=data.get("platforms"),
-                )
-
-                # Send final result
+                # Send initial status
                 await websocket.send_json({
-                    "type": "result",
-                    "data": {
-                        "results": [
-                            listing_to_search_result(l).model_dump()
-                            for l in result.listings
-                        ],
-                        "total": result.total_found,
-                        "sources": result.sources_searched,
-                        "errors": result.errors,
-                    },
+                    "type": "progress",
+                    "step": "start",
+                    "message": "Bắt đầu tìm kiếm...",
                 })
 
-            finally:
-                await agent.close()
+                # Use streaming search
+                results = []
+                async for update in service.search_stream(query, max_results=data.get("max_results", 20)):
+                    if update['type'] == 'status':
+                        await websocket.send_json({
+                            "type": "progress",
+                            "message": update['message'],
+                        })
+                    elif update['type'] == 'result':
+                        results.append(update['data'])
+                        await websocket.send_json({
+                            "type": "partial_result",
+                            "data": listing_to_search_result(update['data']).model_dump(),
+                        })
+                    elif update['type'] == 'complete':
+                        # Send final result
+                        await websocket.send_json({
+                            "type": "result",
+                            "data": {
+                                "results": [
+                                    listing_to_search_result(r).model_dump()
+                                    for r in results
+                                ],
+                                "total": update['total'],
+                                "execution_time_ms": int(update['time'] * 1000),
+                            },
+                        })
+
+            except Exception as e:
+                logger.error(f"Search error: {e}")
+                await websocket.send_json({
+                    "type": "error",
+                    "error": str(e),
+                })
 
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")

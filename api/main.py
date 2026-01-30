@@ -4,8 +4,13 @@ BDS Agent - Hệ thống tìm kiếm bất động sản tự động.
 """
 
 import asyncio
+import sys
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+
+# Fix for Python 3.13 on Windows - Playwright compatibility
+if sys.platform == 'win32' and sys.version_info >= (3, 13):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware

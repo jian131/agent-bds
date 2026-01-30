@@ -4,12 +4,17 @@ Cung cấp common functionality cho tất cả crawlers
 """
 
 import asyncio
+import sys
 from typing import List, Dict, Optional, Any
 from crawl4ai import AsyncWebCrawler, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy, JsonCssExtractionStrategy
 from langchain_groq import ChatGroq
 import os
 from config import settings
+
+# Fix for Python 3.13 on Windows - Playwright compatibility
+if sys.platform == 'win32' and sys.version_info >= (3, 13):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 class BaseCrawler:
     """Base crawler với Crawl4AI"""

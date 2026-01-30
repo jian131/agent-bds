@@ -115,44 +115,43 @@ async def interactive_mode():
     print("=" * 60)
     print("\nNhập 'exit' để thoát, 'help' để xem hướng dẫn\n")
 
-    agent = RealEstateSearchAgent(headless=True)
+    service = RealEstateSearchService()
 
-    try:
-        while True:
-            query = input("\n🔍 Nhập query: ").strip()
+    while True:
+        query = input("\n🔍 Nhập query: ").strip()
 
-            if not query:
-                continue
+        if not query:
+            continue
 
-            if query.lower() == 'exit':
-                print("👋 Tạm biệt!")
-                break
+        if query.lower() == 'exit':
+            print("👋 Tạm biệt!")
+            break
 
-            if query.lower() == 'help':
-                print("""
+        if query.lower() == 'help':
+            print("""
 Hướng dẫn sử dụng:
-  - Nhập query tự nhiên: "chung cư 2PN Cầu Giấy 2-3 tỷ"
-  - Có thể chỉ định: loại BĐS, khu vực, giá, số phòng
-  - Ví dụ:
-    + "Tìm nhà riêng Ba Đình dưới 5 tỷ"
-    + "Đất nền Hà Đông 1-2 tỷ"
-    + "Chung cư 3PN Tây Hồ view hồ"
-                """)
-                continue
+- Nhập query tự nhiên: "chung cư 2PN Cầu Giấy 2-3 tỷ"
+- Có thể chỉ định: loại BĐS, khu vực, giá, số phòng
+- Ví dụ:
+  + "Tìm nhà riêng Ba Đình dưới 5 tỷ"
+  + "Đất nền Hà Đông 1-2 tỷ"
+  + "Chung cư 3PN Tây Hồ view hồ"
+            """)
+            continue
 
-            print(f"\n⏳ Đang tìm kiếm...")
+        print(f"\n⏳ Đang tìm kiếm...")
 
-            result = await agent.search(query, max_results=5)
+        try:
+            results = await service.search(query, max_results=10)
 
-            print(f"\n📊 Kết quả: {result.total_found} listings")
+            print(f"\n📊 Kết quả: {len(results)} listings")
 
-            for i, listing in enumerate(result.listings, 1):
+            for i, listing in enumerate(results[:5], 1):
                 print(f"\n  [{i}] {listing['title'][:50]}...")
                 print(f"      Giá: {listing.get('price_text', 'N/A')} | "
                       f"DT: {listing.get('area_m2', 'N/A')}m²")
-
-    finally:
-        await agent.close()
+        except Exception as e:
+            print(f"❌ Lỗi: {e}")
 
 
 async def main():
