@@ -5,6 +5,8 @@ BDS Agent - Hệ thống tìm kiếm bất động sản tự động.
 
 import asyncio
 import sys
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -12,11 +14,10 @@ from typing import AsyncGenerator
 if sys.platform == 'win32' and sys.version_info >= (3, 13):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-import structlog
 
 from api.routes import search, listings, analytics
 from storage.database import init_db, close_db, get_session
@@ -24,30 +25,51 @@ from storage.vector_db import VectorDB
 from scheduler.jobs import get_scheduler, setup_jobs
 from config import settings
 
+# Setup structured logging
+try:
+    from core.logging import setup_logging, get_logger, set_trace_id, reset_trace_id
+    setup_logging()
+    logger = get_logger(__name__)
+except ImportError:
+    import structlog
+    logger = structlog.get_logger(__name__)
+    def set_trace_id(x): pass
+    def reset_trace_id(): return str(uuid.uuid4())[:8]
 
-# Configure logging
-logger = structlog.get_logger(__name__)
 
-
-class LoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware để log requests."""
+class TraceMiddleware(BaseHTTPMiddleware):
+    """Middleware to add trace_id to all requests."""
 
     async def dispatch(self, request: Request, call_next):
+        # Get or generate trace_id
+        trace_id = request.headers.get("X-Trace-ID") or reset_trace_id()
+        set_trace_id(trace_id)
+
+        start_time = time.time()
+
         logger.info(
             "request_started",
             method=request.method,
-            url=str(request.url),
+            url=str(request.url.path),
             client=request.client.host if request.client else "unknown",
+            trace_id=trace_id,
         )
 
         response = await call_next(request)
 
+        latency_ms = (time.time() - start_time) * 1000
+
         logger.info(
             "request_completed",
             method=request.method,
-            url=str(request.url),
+            url=str(request.url.path),
             status_code=response.status_code,
+            latency_ms=round(latency_ms, 2),
+            trace_id=trace_id,
         )
+
+        # Add trace_id to response headers
+        response.headers["X-Trace-ID"] = trace_id
 
         return response
 
@@ -134,8 +156,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Logging middleware
-app.add_middleware(LoggingMiddleware)
+# Trace ID middleware
+app.add_middleware(TraceMiddleware)
 
 
 # Exception handlers
@@ -205,6 +227,115 @@ async def health_check():
         health["services"]["scheduler"] = "not initialized"
 
     return health
+
+
+@app.get("/ready")
+async def readiness_check():
+    """
+    Readiness check endpoint.
+    Returns 200 only if database is connected and ready to serve traffic.
+    """
+    # Check database connectivity
+    try:
+        from sqlalchemy import text
+        async with get_session() as session:
+            await session.execute(text("SELECT 1"))
+        return {"status": "ready", "database": "connected"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not ready", "database": f"error: {str(e)}"}
+        )
+
+
+@app.get("/api/v1/platforms")
+async def get_platforms():
+    """
+    Get status of all crawler platforms.
+
+    Returns list of supported real estate platforms with their status.
+    """
+    try:
+        from crawlers.adapters import PlatformRegistry
+        platforms = PlatformRegistry.list_platforms()
+        stats = PlatformRegistry.get_stats()
+        available = PlatformRegistry.get_available()
+
+        return {
+            "platforms": platforms,
+            "stats": stats,
+            "total_count": len(platforms),
+            "available_count": len(available),
+        }
+    except Exception as e:
+        logger.error("Failed to get platforms", error=str(e))
+        return {"platforms": [], "total_count": 0, "available_count": 0, "error": str(e)}
+
+
+@app.get("/api/v1/search/multi")
+async def multi_platform_search(
+    q: str = "",
+    city: str = None,
+    district: str = None,
+    min_price: float = None,
+    max_price: float = None,
+    min_area: float = None,
+    max_area: float = None,
+    page: int = 1,
+):
+    """
+    Search across all real estate platforms simultaneously.
+
+    This endpoint uses the orchestrator to:
+    - Fan out requests to all 10+ platforms in parallel
+    - Handle rate limiting and graceful degradation
+    - Aggregate and deduplicate results
+
+    Args:
+        q: Search query (e.g., "nhà phố")
+        city: City filter (e.g., "Hanoi", "HCM")
+        district: District filter
+        min_price: Minimum price in VND
+        max_price: Maximum price in VND
+        min_area: Minimum area in m²
+        max_area: Maximum area in m²
+        page: Page number
+
+    Returns:
+        Aggregated search results with platform status
+    """
+    try:
+        from crawlers.orchestrator import search_all_platforms
+
+        logger.info(
+            "multi_platform_search",
+            query=q,
+            city=city,
+            page=page,
+        )
+
+        results = await search_all_platforms(
+            query=q,
+            city=city,
+            district=district,
+            min_price=min_price,
+            max_price=max_price,
+            min_area=min_area,
+            max_area=max_area,
+            page=page,
+        )
+
+        return results.to_dict()
+
+    except Exception as e:
+        logger.error("Multi-platform search failed", error=str(e))
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Search failed",
+                "message": str(e) if settings.DEBUG else "An error occurred during search",
+            },
+        )
 
 
 @app.get("/")

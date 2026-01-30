@@ -53,10 +53,12 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/bds_agent
       - DATABASE_SYNC_URL=postgresql://postgres:postgres@postgres:5432/bds_agent
       - REDIS_URL=redis://redis:6379
-      - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - CHROMA_PERSIST_DIR=/app/data/chroma
       - APP_ENV=production
       - DEBUG=false
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-llama-3.3-70b-versatile}
+      - ENABLE_PLATFORMS=${ENABLE_PLATFORMS:-batdongsan,chotot,mogi,nhatot}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -66,6 +68,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
     networks:
       - bds_network
@@ -79,12 +87,29 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       - backend
     restart: unless-stopped
     networks:
       - bds_network
+
+  # ChromaDB (Optional - for vector search)
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: bds_chroma
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+    networks:
+      - bds_network
+    profiles:
+      - with-chroma
 
   # Nginx Reverse Proxy (Production)
   nginx:
@@ -105,18 +130,6 @@ services:
     profiles:
       - production
 
-  # Ollama - Local LLM server (Optional)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: bds_ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   restart: unless-stopped
-  #   networks:
-  #     - bds_network
-
 networks:
   bds_network:
     driver: bridge
@@ -124,4 +137,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  # ollama_data:
+  chroma_data:
