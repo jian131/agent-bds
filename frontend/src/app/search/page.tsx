@@ -674,7 +674,7 @@ export default function SearchPage() {
               )}
             </div>
             <div className="flex gap-2">
-              {searchStats.platforms?.map(p => (
+              {Array.isArray(searchStats.platforms) && searchStats.platforms.map(p => (
                 <SourceBadge key={p} platform={p} />
               ))}
             </div>
